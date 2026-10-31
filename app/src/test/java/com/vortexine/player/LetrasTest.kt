@@ -45,4 +45,19 @@ class LetrasTest {
         assertEquals(0f, Ecualizador.dbEn(graves, 14000), 0.01f)
         Ecualizador.PERFILES.forEach { assertEquals(it.nombre, 10, it.db.size) }
     }
+
+    // 1.3: los mismos casos que test_titulos_y_recomendadas_sin_repetir de la PC
+    @Test fun titulosLimpios() {
+        assertEquals("アイドル", Letras.tituloLimpio("YOASOBI「アイドル」Official Music Video", "YOASOBI"))
+        assertEquals("アイドル", Letras.tituloLimpio("YOASOBI - アイドル (Official Music Video)", "YOASOBI"))
+        assertEquals("Kick Back", Letras.tituloLimpio("Kick Back - Official Video", "米津玄師"))
+        assertEquals("Bad Apple!!", Letras.tituloLimpio("Bad Apple!! feat.nomico", "Alstroemeria Records"))
+        assertEquals("Song Name", Letras.tituloLimpio("Song Name | Lyric Video", "X"))
+        assertEquals("Video", Letras.tituloLimpio("Video", "X"))
+        assertEquals("Ado", Letras.artistaLimpio("AdoVEVO"))
+        assertEquals("YOASOBI", Letras.artistaLimpio("YOASOBI - Topic"))
+        assertEquals("Ado, Vaundy", Letras.artistaLimpio("Ado, Vaundy"))
+        assertEquals(com.vortexine.player.motor.YtMusic.clave("YOASOBI - アイドル (Official Music Video)", "YOASOBI - Topic"),
+            com.vortexine.player.motor.YtMusic.clave("アイドル", "YOASOBI"))
+    }
 }

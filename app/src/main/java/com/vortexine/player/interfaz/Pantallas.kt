@@ -32,7 +32,7 @@ import com.vortexine.player.reproductor.Ecualizador
 // --- Biblioteca ---------------------------------------------------------------------------------------
 
 @Composable
-fun FilaPista(p: Pista, sonando: Boolean, alTocar: () -> Unit, menu: @Composable ColumnScope.(cerrar: () -> Unit) -> Unit) {
+fun FilaPista(p: Pista, sonando: Boolean, alTocar: () -> Unit, gusta: Boolean = false, menu: @Composable ColumnScope.(cerrar: () -> Unit) -> Unit) {
     var abierto by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().clickable(onClick = alTocar).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -43,6 +43,7 @@ fun FilaPista(p: Pista, sonando: Boolean, alTocar: () -> Unit, menu: @Composable
             val tinta by androidx.compose.animation.animateColorAsState(if (sonando) C.acento else C.texto, label = "sonando")
             Text(p.titulo, color = tinta, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (gusta) Icon(Icons.Rounded.Favorite, "Te gusta", tint = C.acento, modifier = Modifier.padding(end = 4.dp).size(14.dp))
                 Etiqueta(p.etiqueta, p.nivel)
                 Text((if (p.etiqueta.isNotEmpty()) "  " else "") + p.artista, color = C.tenue, fontSize = 13.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -55,12 +56,24 @@ fun FilaPista(p: Pista, sonando: Boolean, alTocar: () -> Unit, menu: @Composable
     }
 }
 
+/** 1.3: lo que va en el menú de cualquier canción: ❤️ y la cola «A continuación». */
+@Composable
+fun ColumnScope.OpcionesCancion(vm: VistaModelo, p: Pista, gusta: Boolean, cerrar: () -> Unit) {
+    DropdownMenuItem({ Text(if (gusta) "Quitar de Tus me gusta" else "Guardar en Tus me gusta") }, { cerrar(); vm.alternarMeGusta(p.uri) },
+        leadingIcon = { Icon(if (gusta) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null, tint = if (gusta) C.acento else C.suave) })
+    DropdownMenuItem({ Text("Tocar después") }, { cerrar(); vm.tocarDespues(p) },
+        leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, null) })
+    DropdownMenuItem({ Text("Agregar a la cola") }, { cerrar(); vm.agregarACola(p) },
+        leadingIcon = { Icon(Icons.Rounded.AddToQueue, null) })
+}
+
 @Composable
 fun PantallaBiblioteca(vm: VistaModelo) {
     val pistas by vm.pistas.collectAsStateWithLifecycle()
     val cargando by vm.cargando.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     val sonando by vm.sonando.collectAsStateWithLifecycle()
+    val meGusta by vm.meGusta.collectAsStateWithLifecycle()
     var filtro by rememberSaveable { mutableStateOf("") }
     var paraPlaylist by remember { mutableStateOf<Pista?>(null) }
     var paraBorrar by remember { mutableStateOf<Pista?>(null) }
@@ -86,7 +99,8 @@ fun PantallaBiblioteca(vm: VistaModelo) {
             "Busca canciones en «Buscar» o copia tus FLAC a la carpeta Música.")
         LazyColumn(Modifier.fillMaxSize()) {
             items(vistas, key = { it.uri }) { p ->
-                Box(Modifier.animateItem()) { FilaPista(p, p.uri == sonando.uri, { vm.tocar(vistas, vistas.indexOf(p), de = "Tu música") }) { cerrar ->
+                Box(Modifier.animateItem()) { FilaPista(p, p.uri == sonando.uri, { vm.tocar(vistas, vistas.indexOf(p), de = "Tu música") }, p.uri in meGusta) { cerrar ->
+                    OpcionesCancion(vm, p, p.uri in meGusta, cerrar)
                     DropdownMenuItem({ Text("Agregar a una playlist") }, { cerrar(); paraPlaylist = p },
                         leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) })
                     if (p.videoId.isNotEmpty()) DropdownMenuItem({ Text("Borrar del teléfono") }, { cerrar(); paraBorrar = p },
@@ -147,6 +161,7 @@ fun PantallaBuscar(vm: VistaModelo) {
     val paraTi by vm.paraTi.collectAsStateWithLifecycle()
     val paraTiDe by vm.paraTiDe.collectAsStateWithLifecycle()
     val cargandoParaTi by vm.cargandoParaTi.collectAsStateWithLifecycle()
+    val bajadas by vm.bajadas.collectAsStateWithLifecycle()
     var texto by rememberSaveable { mutableStateOf("") }
     var paraPlaylist by remember { mutableStateOf<Cancion?>(null) }
     val sinBusqueda = !buscando && resultados.isEmpty() && enlace == null
@@ -193,7 +208,8 @@ fun PantallaBuscar(vm: VistaModelo) {
                     }
                     if (cargandoParaTi) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp), color = C.acento, trackColor = C.borde)
                 }
-                items(paraTi, key = { "t" + it.id }) { c -> Box(Modifier.animateItem()) { FilaCancion(c, vm) { paraPlaylist = it } } }
+                // 1.3: la que bajas se quita de la lista (ya la tienes)
+                items(paraTi.filter { it.id !in bajadas }, key = { "t" + it.id }) { c -> Box(Modifier.animateItem()) { FilaCancion(c, vm) { paraPlaylist = it } } }
                 if (paraTi.isEmpty() && !cargandoParaTi) item {
                     Vacio(Icons.Rounded.Headphones, "Busca lo que quieras oír",
                         "Toca la portada para escuchar 30 segundos antes de bajarla.")
@@ -225,7 +241,7 @@ fun PantallaPlaylists(vm: VistaModelo, abrir: (Long) -> Unit) {
             items(playlists, key = { it.id }) { p ->
                 Row(Modifier.animateItem().fillMaxWidth().clickable { abrir(p.id) }.padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Mosaico(portadas[p.id].orEmpty(), 64.dp)
+                    Mosaico(portadas[p.id].orEmpty(), 64.dp, meGusta = p.meGusta)
                     Column(Modifier.padding(start = 14.dp)) {
                         Text(p.nombre, color = C.texto, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("Playlist · " + cuantas(p.cuantas), color = C.tenue, fontSize = 13.sp)
@@ -245,9 +261,11 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
     val recomendadas by vm.recomendadas.collectAsStateWithLifecycle()
     val recomendando by vm.recomendando.collectAsStateWithLifecycle()
     val portadas by vm.portadas.collectAsStateWithLifecycle()
+    val meGusta by vm.meGusta.collectAsStateWithLifecycle()
+    val bajadas by vm.bajadas.collectAsStateWithLifecycle()
     val p = playlists.firstOrNull { it.id == id } ?: run { LaunchedEffect(Unit) { volver() }; return }
     val mosaico = portadas[id].orEmpty()
-    val color = colorAnimado(mosaico.firstOrNull().orEmpty())
+    val color = if (p.meGusta) C.morado else colorAnimado(mosaico.firstOrNull().orEmpty())
     val dentro = remember(pistas, playlists) { vm.pistasDe(id) }
     var renombrar by remember { mutableStateOf(false) }
     var borrar by remember { mutableStateOf(false) }
@@ -263,7 +281,7 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
                 Spacer(Modifier.weight(1f))
             }
             Box(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 16.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.graphicsLayerSombra()) { Mosaico(mosaico, 220.dp, 4.dp) }
+                Box(Modifier.graphicsLayerSombra()) { Mosaico(mosaico, 220.dp, 4.dp, p.meGusta) }
             }
             Column(Modifier.padding(horizontal = 20.dp)) {
                 Text(p.nombre, color = C.blanco, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -273,8 +291,10 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
                 IconButton({ vm.tocar(dentro, dentro.indices.random(), aleatorio = true, de = p.nombre) }, enabled = dentro.isNotEmpty()) {
                     Icon(Icons.Rounded.Shuffle, "Aleatorio", tint = C.suave)
                 }
-                IconButton({ renombrar = true }) { Icon(Icons.Rounded.Edit, "Renombrar", tint = C.suave) }
-                IconButton({ borrar = true }) { Icon(Icons.Rounded.DeleteOutline, "Borrar playlist", tint = C.suave) }
+                if (!p.meGusta) {
+                    IconButton({ renombrar = true }) { Icon(Icons.Rounded.Edit, "Renombrar", tint = C.suave) }
+                    IconButton({ borrar = true }) { Icon(Icons.Rounded.DeleteOutline, "Borrar playlist", tint = C.suave) }
+                }
                 Spacer(Modifier.weight(1f))
                 BotonTocar(sonandoAqui, 56.dp, dentro.isNotEmpty()) {
                     if (dentro.any { it.uri == sonando.uri }) vm.pausarOSeguir() else vm.tocar(dentro, 0, de = p.nombre)
@@ -282,8 +302,9 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
             }
         }
         items(dentro, key = { "p" + it.uri }) { t ->
-            Box(Modifier.animateItem()) { FilaPista(t, t.uri == sonando.uri, { vm.tocar(dentro, dentro.indexOf(t), de = p.nombre) }) { cerrar ->
-                DropdownMenuItem({ Text("Quitar de la playlist") }, { cerrar(); vm.quitarDe(id, t) },
+            Box(Modifier.animateItem()) { FilaPista(t, t.uri == sonando.uri, { vm.tocar(dentro, dentro.indexOf(t), de = p.nombre) }, t.uri in meGusta) { cerrar ->
+                OpcionesCancion(vm, t, t.uri in meGusta, cerrar)
+                if (!p.meGusta) DropdownMenuItem({ Text("Quitar de la playlist") }, { cerrar(); vm.quitarDe(id, t) },
                     leadingIcon = { Icon(Icons.Rounded.RemoveCircleOutline, null) })
             } }
         }
@@ -295,7 +316,7 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
             }
             if (recomendando == id) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp), color = C.lila, trackColor = C.borde)
         }
-        items(recomendadas[id].orEmpty(), key = { "r" + it.id }) { c -> Box(Modifier.animateItem()) { FilaCancion(c, vm, id) { vm.bajar(it, id) } } }
+        items(recomendadas[id].orEmpty().filter { it.id !in bajadas }, key = { "r" + it.id }) { c -> Box(Modifier.animateItem()) { FilaCancion(c, vm, id) { vm.bajar(it, id) } } }
     }
     if (renombrar) PedirTexto("Renombrar", p.nombre, "Guardar", { vm.renombrar(id, it); renombrar = false }) { renombrar = false }
     if (borrar) AlertDialog({ borrar = false }, containerColor = C.tarjeta, title = { Text("¿Borrar «${p.nombre}»?") },

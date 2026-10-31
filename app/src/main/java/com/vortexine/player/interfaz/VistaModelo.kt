@@ -20,7 +20,10 @@ import com.vortexine.player.motor.Letras
 import com.vortexine.player.motor.Pista
 import com.vortexine.player.motor.Playlist
 import com.vortexine.player.motor.YtMusic
+import com.vortexine.player.reproductor.Fundido
+import com.vortexine.player.reproductor.Jugador
 import com.vortexine.player.reproductor.ServicioReproduccion
+import com.vortexine.player.reproductor.Temporizador
 import com.vortexine.player.motor.Actualizador
 import com.vortexine.player.motor.Cuenta
 import com.vortexine.player.motor.Sincro
@@ -63,6 +66,12 @@ data class Sonando(
 
 data class Bajando(val cancion: Cancion, val progreso: Float, val error: String = "")
 
+/** 1.3: una canción de la cola «A continuación»: su lugar en la cola del reproductor y qué es. */
+data class EnCola(val indice: Int, val pista: Pista)
+
+/** 1.3: cuántas canciones ya tienen su letra guardada (para verlas sin internet). */
+data class LetrasGuardadas(val con: Int = 0, val total: Int = 0, val trabajando: Boolean = false)
+
 class VistaModelo(app: Application) : AndroidViewModel(app) {
     private val vapp = app as VortexApp
     private val bib = vapp.biblioteca
@@ -91,6 +100,14 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     val cargandoParaTi = MutableStateFlow(false)
     private val sesion = app.getSharedPreferences("sesion", android.content.Context.MODE_PRIVATE)
 
+    // 1.3: ❤️, la cola «A continuación», el temporizador, el crossfade y las letras sin internet
+    val meGusta = MutableStateFlow<Set<String>>(emptySet())
+    val siguientes = MutableStateFlow<List<EnCola>>(emptyList())
+    val temporizador = Temporizador.estado
+    val fundido = MutableStateFlow(Fundido.segundos)
+    val letrasGuardadas = MutableStateFlow(LetrasGuardadas())
+    private var despues = 0   // cuántas «tocar después» van detrás de la que suena
+
     private var control: MediaController? = null
 
     // 1.1: la cuenta de Google, la sincronización y las actualizaciones
@@ -117,6 +134,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
 
     fun recargar() = viewModelScope.launch {
         val (p, l, b) = withContext(Dispatchers.IO) { Triple(bib.pistas(), bib.playlists(), bib.idsBajados()) }
+        meGusta.value = withContext(Dispatchers.IO) { bib.meGusta() }
         portadas.value = withContext(Dispatchers.IO) {
             val porUri = p.associateBy { it.uri }
             l.associate { pl -> pl.id to bib.urisDe(pl.id).mapNotNull { porUri[it]?.portada?.takeIf(String::isNotEmpty) }.distinct().take(4) }
@@ -127,6 +145,8 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         cargando.value = false
         actualizarSonando()
         restaurar()
+        actualizarCola()
+        if (!letrasPedidas) { letrasPedidas = true; bajarLetras() }
     }
 
     // --- reproducir ----------------------------------------------------------------------------------
@@ -141,6 +161,8 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             c.addListener(object : Player.Listener {
                 override fun onEvents(player: Player, events: Player.Events) {
                     actualizarSonando()
+                    if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED,
+                            Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) actualizarCola()
                     if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED,
                             Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
                             Player.EVENT_REPEAT_MODE_CHANGED)) guardarSesion()
@@ -167,7 +189,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             aleatorio = c.shuffleModeEnabled, repetir = c.repeatMode,
             hayAnterior = c.hasPreviousMediaItem() || c.currentPosition > 3000, haySiguiente = c.hasNextMediaItem(),
         )
-        if (uri != ultimaUri) { ultimaUri = uri; cambioDeCancion(sonando.value) }
+        if (uri != ultimaUri) { ultimaUri = uri; despues = (despues - 1).coerceAtLeast(0); cambioDeCancion(sonando.value) }
     }
 
     // --- 1.2: seguir donde te quedaste -----------------------------------------------------------------
@@ -274,6 +296,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         val c = control ?: return
         origen.value = de
         restaurada = true
+        despues = 0
         c.setMediaItems(lista.map(::item), desde.coerceIn(0, (lista.size - 1).coerceAtLeast(0)), 0)
         c.shuffleModeEnabled = aleatorio
         c.prepare()
@@ -292,6 +315,121 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
                 Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
                 else -> Player.REPEAT_MODE_OFF
             }
+        }
+    }
+
+    // --- 1.3: ❤️ «Tus me gusta» ------------------------------------------------------------------------
+
+    fun alternarMeGusta(uri: String) {
+        if (uri.isEmpty()) return
+        viewModelScope.launch {
+            val gusta = withContext(Dispatchers.IO) { bib.alternarMeGusta(uri) }
+            aviso.value = if (gusta) "Agregada a Tus me gusta" else "Quitada de Tus me gusta"
+            recargar()
+            cambio()
+        }
+    }
+
+    // --- 1.3: la cola «A continuación» ---------------------------------------------------------------
+    // Se usa el ExoPlayer del servicio (está en este mismo proceso): con aleatorio, ExoPlayer metería la nueva
+    // en cualquier lugar, y aquí se acomoda justo después de la que suena.
+
+    /** Lo que viene, en el orden en que va a sonar (con aleatorio, el orden revuelto). */
+    private fun actualizarCola() {
+        val j = Jugador.actual ?: return
+        val t = j.currentTimeline
+        if (t.isEmpty) { siguientes.value = emptyList(); return }
+        val porUri = pistas.value.associateBy { it.uri }
+        val lista = mutableListOf<EnCola>()
+        var i = t.getNextWindowIndex(j.currentMediaItemIndex, Player.REPEAT_MODE_OFF, j.shuffleModeEnabled)
+        while (i != androidx.media3.common.C.INDEX_UNSET && lista.size < 300) {
+            porUri[j.getMediaItemAt(i).mediaId]?.let { lista += EnCola(i, it) }
+            i = t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, j.shuffleModeEnabled)
+        }
+        siguientes.value = lista
+    }
+
+    /** Suena justo después de la actual (y de las que ya pusiste con «tocar después»). */
+    fun tocarDespues(p: Pista) = meterEnCola(p, alFinal = false)
+
+    fun agregarACola(p: Pista) = meterEnCola(p, alFinal = true)
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun meterEnCola(p: Pista, alFinal: Boolean) {
+        val j = Jugador.actual
+        if (j == null || j.mediaItemCount == 0) { tocar(listOf(p), 0, de = origen.value.ifEmpty { "Tu música" }); return }
+        // en el orden en que suenan: dónde va la nueva
+        val orden = mutableListOf<Int>()
+        val t = j.currentTimeline
+        var i = t.getFirstWindowIndex(j.shuffleModeEnabled)
+        while (i != androidx.media3.common.C.INDEX_UNSET) { orden += i; i = t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, j.shuffleModeEnabled) }
+        val aqui = orden.indexOf(j.currentMediaItemIndex)
+        val lugar = if (alFinal) orden.size else (aqui + 1 + despues).coerceAtMost(orden.size)
+        val nuevo = j.mediaItemCount   // se agrega al final de la lista; el orden de sonar se acomoda aparte
+        j.addMediaItem(item(p))
+        orden.add(lugar, nuevo)
+        if (j.shuffleModeEnabled) j.setShuffleOrder(androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder(orden.toIntArray(), System.nanoTime()))
+        else if (!alFinal) j.moveMediaItem(nuevo, j.currentMediaItemIndex + 1 + despues)
+        if (!alFinal) despues++
+        aviso.value = if (alFinal) "Agregada a la cola" else "Suena después de esta"
+        actualizarCola()
+        guardarSesion()
+    }
+
+    fun saltarA(indice: Int) { control?.let { despues = 0; it.seekTo(indice, 0); it.play() } }
+
+    fun quitarDeCola(indice: Int) {
+        val j = Jugador.actual ?: return
+        if (indice == j.currentMediaItemIndex) return
+        if (siguientes.value.indexOfFirst { it.indice == indice } in 0 until despues) despues--
+        j.removeMediaItem(indice)
+        actualizarCola()
+        guardarSesion()
+    }
+
+    // --- 1.3: temporizador y crossfade -----------------------------------------------------------------
+
+    /** Minutos; -1: al terminar la canción; 0: apagado. */
+    fun dormir(minutos: Int) {
+        Temporizador.poner(minutos)
+        aviso.value = when {
+            minutos > 0 -> "La música se pausa en $minutos minutos."
+            minutos < 0 -> "La música se pausa al terminar esta canción."
+            else -> "Temporizador apagado."
+        }
+    }
+
+    fun ponerFundido(segundos: Int) { Fundido.poner(getApplication(), segundos); fundido.value = segundos }
+
+    // --- 1.3: las letras de toda tu música, para verlas sin internet -----------------------------------
+
+    private var letrasPedidas = false
+
+    /** Busca (despacito, en segundo plano) la letra de cada canción que todavía no la tiene. */
+    fun bajarLetras() {
+        if (letrasGuardadas.value.trabajando) return
+        val todas = pistas.value
+        val dir = File(getApplication<Application>().filesDir, "letras")
+        letrasGuardadas.value = letrasGuardadas.value.copy(trabajando = true)
+        vapp.alcance.launch {
+            var con = 0
+            val faltan = todas.filter { p ->
+                Letras.guardada(dir, p.titulo, p.artista, (p.duracionMs / 1000).toInt()).also { if (it) con++ }.not()
+            }
+            letrasGuardadas.value = LetrasGuardadas(con, todas.size, faltan.isNotEmpty())
+            for (p in faltan) {
+                try {
+                    Letras.de(dir, p.titulo, p.artista, (p.duracionMs / 1000).toInt(), p.videoId)
+                } catch (e: IOException) {
+                    break   // sin internet (o LRCLIB caído): la próxima vez que abras la app
+                } catch (e: Exception) {
+                    // una canción rara no detiene a las demás
+                }
+                con++
+                letrasGuardadas.value = LetrasGuardadas(con, todas.size, true)
+                delay(1500)   // sin prisa: LRCLIB es gratis y de una persona
+            }
+            letrasGuardadas.value = LetrasGuardadas(con, todas.size, false)
         }
     }
 
@@ -412,7 +550,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
                 }
                 playlist?.let { bib.agregarA(it, bib.normal(uri)) }
                 cola.update { l -> l.filterNot { it.cancion.id == c.id } }
-                withContext(Dispatchers.Main) { recargar(); cambio() }
+                withContext(Dispatchers.Main) { letrasPedidas = false; recargar(); cambio() }   // 1.3: y su letra, para verla sin internet
             } catch (e: Exception) {
                 cola.update { l -> l.map { if (it.cancion.id == c.id) it.copy(error = mensaje(e)) else it } }
             }
@@ -500,7 +638,9 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             val dentro = pistasDe(id)
             val semillas = dentro.shuffled().sortedByDescending { it.videoId.isNotEmpty() }.take(3)
                 .map { YtMusic.Semilla(it.videoId, it.titulo, it.artista) }
-            val tienes = pistas.value.map { YtMusic.Semilla(it.videoId, it.titulo, it.artista) }
+            // 1.3: «Otras» no repite las que ya te había enseñado
+            val tienes = pistas.value.map { YtMusic.Semilla(it.videoId, it.titulo, it.artista) } +
+                recomendadas.value[id].orEmpty().map { YtMusic.Semilla(it.id, it.titulo, it.artistas) }
             try {
                 val r = withContext(Dispatchers.IO) { YtMusic.recomendar(semillas, tienes, 20) }
                 recomendadas.update { it + (id to r) }

@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -119,9 +120,11 @@ fun PantallaAjustes(vm: VistaModelo) {
     var permiso by remember { mutableStateOf(Actualizador.puedeInstalar(ctx)) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { permiso = Actualizador.puedeInstalar(ctx) }
     val iniciar = rememberIniciarSesion(vm)
+    val fundido by vm.fundido.collectAsStateWithLifecycle()
+    val letras by vm.letrasGuardadas.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Titulo("Ajustes", "Tu cuenta y las actualizaciones")
+        Titulo("Ajustes", "Tu cuenta, la reproducción y las actualizaciones")
 
         Seccion("Cuenta de Google", Icons.Rounded.AccountCircle) {
             if (cuenta.conectada) {
@@ -144,6 +147,26 @@ fun PantallaAjustes(vm: VistaModelo) {
                     color = C.tenue, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
                 Button(iniciar, Modifier.padding(top = 10.dp)) { Text("Iniciar sesión con Google") }
             }
+        }
+
+        // 1.3: crossfade y las letras guardadas para verlas sin internet
+        Seccion("Reproducción", Icons.Rounded.Tune) {
+            Text("Crossfade", color = C.texto, fontWeight = FontWeight.SemiBold)
+            Text("La canción que termina se va apagando mientras la siguiente entra.", color = C.tenue, fontSize = 12.sp)
+            Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0 to "Sin", 3 to "3 s", 5 to "5 s", 8 to "8 s", 12 to "12 s").forEach { (seg, nombre) ->
+                    FilterChip(fundido == seg, { vm.ponerFundido(seg) }, { Text(nombre) }, border = null,
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = C.morado, selectedLabelColor = C.blanco,
+                            containerColor = C.campo, labelColor = C.suave))
+                }
+            }
+            Text("Letras sin internet", color = C.texto, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 14.dp))
+            Text(if (letras.total == 0) "Se buscan solas para toda tu música y se guardan en el teléfono."
+                else "${letras.con} de ${letras.total} canciones ya buscadas" + if (letras.trabajando) " · buscando las demás…" else ".",
+                color = C.tenue, fontSize = 12.sp)
+            if (letras.trabajando && letras.total > 0) LinearProgressIndicator({ letras.con / letras.total.toFloat() },
+                Modifier.fillMaxWidth().padding(top = 6.dp), color = C.acento, trackColor = C.borde)
+            else TextButton(vm::bajarLetras) { Text("Buscar las que faltan") }
         }
 
         Seccion("Actualizaciones", Icons.Rounded.SystemUpdate) {

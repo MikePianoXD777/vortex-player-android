@@ -28,7 +28,7 @@ data class Pista(
     val nivel get() = Calidad.nivel(codec, bits, hz)
 }
 
-data class Playlist(val id: Long, val nombre: String, val cuantas: Int)
+data class Playlist(val id: Long, val nombre: String, val cuantas: Int, val meGusta: Boolean = false)
 
 /**
  * La biblioteca: toda la música del teléfono (la que ve Android) más lo que sabe Vortex Player de las que
@@ -120,7 +120,10 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
                 setTransactionSuccessful()
             } finally { endTransaction() }
         }
-        return salida
+        // 1.3: lo bajado de YouTube se ve con su título limpio («アイドル», no «YOASOBI - アイドル (Official…)»)
+        return salida.map { p ->
+            if (p.videoId.isEmpty()) p else p.copy(titulo = Letras.tituloLimpio(p.titulo, p.artista), artista = Letras.artistaLimpio(p.artista))
+        }
     }
 
     private fun numero(uri: String) = uri.substringAfterLast('/')
@@ -165,9 +168,35 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
 
     // --- playlists -----------------------------------------------------------------------------------
 
+    /** «Tus me gusta» siempre primero (1.3), luego por nombre. */
     fun playlists(): List<Playlist> = readableDatabase.rawQuery(
-        "SELECT p.id, p.nombre, COUNT(e.uri) FROM playlists p LEFT JOIN en_playlist e ON e.playlist = p.id GROUP BY p.id ORDER BY p.nombre COLLATE NOCASE",
-        null).use { c -> buildList { while (c.moveToNext()) add(Playlist(c.getLong(0), c.getString(1), c.getInt(2))) } }
+        "SELECT p.id, p.nombre, COUNT(e.uri), p.nube = ? FROM playlists p LEFT JOIN en_playlist e ON e.playlist = p.id " +
+            "GROUP BY p.id ORDER BY p.nube = ? DESC, p.nombre COLLATE NOCASE",
+        arrayOf(ME_GUSTA, ME_GUSTA)).use { c -> buildList { while (c.moveToNext()) add(Playlist(c.getLong(0), c.getString(1), c.getInt(2), c.getInt(3) == 1)) } }
+
+    // --- 1.3: «Tus me gusta» -------------------------------------------------------------------------
+
+    /** La playlist de «Tus me gusta» (null si todavía no le das ❤️ a nada). */
+    fun idMeGusta(crear: Boolean = false): Long? =
+        readableDatabase.rawQuery("SELECT id FROM playlists WHERE nube = ?", arrayOf(ME_GUSTA)).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+            ?: if (!crear) null else writableDatabase.insert("playlists", null, ContentValues().apply {
+                put("nombre", NOMBRE_ME_GUSTA); put("nube", ME_GUSTA); put("modificada", ahora())
+            })
+
+    fun meGusta(): Set<String> = idMeGusta()?.let { urisDe(it).toSet() } ?: emptySet()
+
+    /** ❤️ o ya no. Las nuevas van hasta arriba, como en Spotify. Devuelve si ahora te gusta. */
+    fun alternarMeGusta(uri: String): Boolean {
+        val id = idMeGusta(crear = true)!!
+        val gusta = if (writableDatabase.delete("en_playlist", "playlist = ? AND uri = ?", arrayOf(id.toString(), uri)) > 0) false else {
+            val pos = readableDatabase.rawQuery("SELECT COALESCE(MIN(pos), 1) - 1 FROM en_playlist WHERE playlist = ?",
+                arrayOf(id.toString())).use { c -> c.moveToFirst(); c.getInt(0) }
+            writableDatabase.insert("en_playlist", null, ContentValues().apply { put("playlist", id); put("uri", uri); put("pos", pos) })
+            true
+        }
+        cambio(id)
+        return gusta
+    }
 
     fun nuevaPlaylist(nombre: String): Long = writableDatabase.insert("playlists", null, ContentValues().apply {
         put("nombre", nombre.trim().take(60)); put("modificada", ahora())
@@ -269,5 +298,8 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
 
     companion object {
         val ID_EN_NOMBRE = Regex("\\[([\\w-]{11})](\\.\\w+)?$")
+        /** 1.3: el id fijo de «Tus me gusta» en la nube: el mismo en la PC y en el teléfono (si no, saldrían dos). */
+        const val ME_GUSTA = "me-gusta"
+        const val NOMBRE_ME_GUSTA = "Tus me gusta"
     }
 }

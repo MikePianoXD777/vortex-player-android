@@ -182,9 +182,10 @@ object YtMusic {
     }
 
     /** Para reconocer la misma canción aunque venga de otro lado: «idol (from oshi no ko)» ≈ «idol». */
+    /** 1.3: con el título limpio, «YOASOBI - アイドル (Official Music Video)» de «YOASOBI - Topic» ≈ «アイドル» de «YOASOBI». */
     fun clave(titulo: String, artista: String): String {
-        val t = titulo.lowercase().replace(Regex("[(\\[].*?[)\\]]|\\s-\\s.*$"), "")
-        return t.replace(Regex("\\W+"), "") + "|" + artista.lowercase().split(",")[0].replace(Regex("\\W+"), "")
+        val t = Letras.tituloLimpio(titulo, artista).lowercase().replace(Regex("[(\\[].*?[)\\]]|\\s-\\s.*$"), "")
+        return t.replace(Regex("\\W+"), "") + "|" + Letras.limpiarArtista(artista).lowercase().replace(Regex("\\W+"), "")
     }
 
     data class Semilla(val id: String, val titulo: String, val artista: String)

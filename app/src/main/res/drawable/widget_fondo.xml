@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.3: el fondo del widget: la tarjeta de Obsidian (#282828), redondeada -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#282828" />
+    <corners android:radius="20dp" />
+</shape>

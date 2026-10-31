@@ -35,8 +35,37 @@ object Letras {
             val a = limpiarArtista(artista)
             if (a.isEmpty() || izq.equals(a, true) || a.contains(izq, true) || izq.contains(a, true)) t = t.substring(guion + 3).trim()
         }
-        t = t.replace(Regex("\\s+(ft\\.?|feat\\.?|featuring)\\s.*$", RegexOption.IGNORE_CASE), "")
+        t = t.replace(Regex("\\s+(featuring\\b|feat\\b\\.?|ft\\b\\.?).*$", RegexOption.IGNORE_CASE), "")
         return t.trim(' ', '-', '|', '"').ifEmpty { titulo.trim() }
+    }
+
+    // 1.3: lo que se pega al final de los títulos de video sin paréntesis: «… Official Music Video», «… MV»
+    private val COLA = Regex("\\s*[-|/~]?\\s*(official\\s+(music\\s+)?video|official\\s+(audio|mv|lyric\\s+video)|music\\s+video|" +
+        "lyric\\s+video|lyrics?|m/?v|audio|visuali[sz]er|video\\s+oficial|v[ií]deo\\s+oficial|letra|hd|4k)\\s*$", RegexOption.IGNORE_CASE)
+    private val COMILLAS = Regex("^(.*?)\\s*[「『【\"“]([^」』】\"”]+)[」』】\"”]")
+
+    /** «YOASOBI - Topic» → «YOASOBI», «AdoVEVO» → «Ado» (deja a todos los artistas, no solo el primero). */
+    fun artistaLimpio(artista: String): String = artista.trim()
+        .replace(Regex("\\s*-\\s*Topic$|VEVO$|\\s+Official$|\\s*(official\\s+)?(channel|ch\\.?)$", RegexOption.IGNORE_CASE), "").trim()
+
+    /**
+     * El título como en Spotify: sin «(Official Music Video)», sin «Artista - » adelante, sin «feat. …».
+     * «YOASOBI「アイドル」Official Music Video» → «アイドル». El mismo que `titulo_limpio` de la PC.
+     */
+    fun tituloLimpio(titulo: String, artista: String = ""): String {
+        var t = titulo
+        val a = limpiarArtista(artista).lowercase()
+        COMILLAS.find(t)?.let { m ->
+            val antes = m.groupValues[1].trim()
+            if (antes.isNotEmpty() && (a.isEmpty() || antes.lowercase().contains(a) || a.contains(antes.lowercase()))) t = m.groupValues[2]
+        }
+        t = limpiar(t, artista)
+        repeat(3) {
+            val t2 = COLA.replace(t, "").trim(' ', '-', '|', '~')
+            if (t2 == t || t2.isEmpty()) return t.trim().ifEmpty { titulo.trim() }
+            t = t2
+        }
+        return t.trim().ifEmpty { titulo.trim() }
     }
 
     fun limpiarArtista(artista: String): String = artista.split(",", " & ", " x ", " feat", " ft.")[0]
@@ -114,6 +143,9 @@ object Letras {
             .joinToString("") { "%02x".format(it) }.take(20)
         return File(dir, "$h.json")
     }
+
+    /** Si ya se buscó (la haya o no): para guardar las letras de toda tu música sin repetir (1.3). */
+    fun guardada(dir: File, titulo: String, artista: String, segundos: Int) = archivo(dir, titulo, artista, segundos).exists()
 
     /**
      * La letra guardada, o la busca (LRCLIB y luego YouTube Music) y la guarda. null si no hay (y no se vuelve

@@ -119,6 +119,7 @@ fun MiniReproductor(s: Sonando, vm: VistaModelo, abrir: () -> Unit) {
                     }
                 }
             }
+            Corazon(vm, s.uri, 24.dp)
             val fuente = remember { MutableInteractionSource() }
             IconButton(vm::pausarOSeguir, Modifier.alPresionar(fuente), interactionSource = fuente) {
                 Icon(if (s.tocando) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Tocar o pausar", tint = C.blanco, modifier = Modifier.size(30.dp))
@@ -136,6 +137,9 @@ fun MiniReproductor(s: Sonando, vm: VistaModelo, abrir: () -> Unit) {
 fun Reproductor(s: Sonando, vm: VistaModelo, cerrar: () -> Unit) {
     var arrastrando by remember { mutableStateOf<Float?>(null) }
     var letraGrande by rememberSaveable { mutableStateOf(false) }
+    var verCola by remember { mutableStateOf(false) }
+    var verDormir by remember { mutableStateOf(false) }
+    val dormir by vm.temporizador.collectAsStateWithLifecycle()
     val origen by vm.origen.collectAsStateWithLifecycle()
     val letra by vm.letra.collectAsStateWithLifecycle()
     val buscandoLetra by vm.buscandoLetra.collectAsStateWithLifecycle()
@@ -167,13 +171,16 @@ fun Reproductor(s: Sonando, vm: VistaModelo, cerrar: () -> Unit) {
                         }
                     }
                     Spacer(Modifier.weight(0.5f))
-                    AnimatedContent(s.uri, transitionSpec = { cambioDeCancion() }, label = "título") { _ ->
-                        Column(conDesenfoque().fillMaxWidth()) {
-                            Text(s.titulo, color = C.blanco, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(s.artista, color = C.blanco.copy(alpha = 0.7f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(6.dp))
-                            Etiqueta(s.etiqueta, s.nivel)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AnimatedContent(s.uri, transitionSpec = { cambioDeCancion() }, modifier = Modifier.weight(1f), label = "título") { _ ->
+                            Column(conDesenfoque().fillMaxWidth()) {
+                                Text(s.titulo, color = C.blanco, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(s.artista, color = C.blanco.copy(alpha = 0.7f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Spacer(Modifier.height(6.dp))
+                                Etiqueta(s.etiqueta, s.nivel)
+                            }
                         }
+                        Corazon(vm, s.uri, 30.dp)
                     }
                     Spacer(Modifier.height(12.dp))
                     val dur = s.duracion.coerceAtLeast(1)
@@ -199,6 +206,15 @@ fun Reproductor(s: Sonando, vm: VistaModelo, cerrar: () -> Unit) {
                                 "Repetir", tint = if (s.repetir != androidx.media3.common.Player.REPEAT_MODE_OFF) C.acento else C.blanco)
                         }
                     }
+                    // 1.3: el temporizador para dormir y la cola «A continuación», como abajo en Spotify
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton({ verDormir = true }) {
+                            Icon(Icons.Rounded.Bedtime, "Temporizador para dormir", tint = if (dormir.activo) C.acento else C.blanco.copy(alpha = 0.8f))
+                            if (dormir.activo) Text("  " + textoDormir(dormir), color = C.acento, fontSize = 13.sp)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        IconButton({ verCola = true }) { Icon(Icons.Rounded.QueueMusic, "A continuación", tint = C.blanco.copy(alpha = 0.8f)) }
+                    }
                     Spacer(Modifier.weight(0.3f))
                     if (letra != null) Text("Desliza hacia arriba para ver la letra", color = C.blanco.copy(alpha = 0.5f), fontSize = 12.sp)
                     Spacer(Modifier.height(12.dp))
@@ -207,6 +223,8 @@ fun Reproductor(s: Sonando, vm: VistaModelo, cerrar: () -> Unit) {
                 Spacer(Modifier.height(32.dp))
             }
         }
+        if (verCola) Cola(vm, s) { verCola = false }
+        if (verDormir) Dormir(vm, dormir) { verDormir = false }
         AnimatedVisibility(letraGrande && letra != null, enter = fadeIn(tween(250)) + scaleIn(tween(300), 0.94f), exit = fadeOut(tween(200)) + scaleOut(tween(200), 0.96f)) {
             letra?.let { Box(conDesenfoque()) { LetraCompleta(it, s, color, vm) { letraGrande = false } } }
         }
@@ -267,6 +285,92 @@ private fun LineasLetra(letra: Letras.Letra, s: Sonando, vm: VistaModelo, modifi
             Text(l.texto.ifEmpty { if (letra.sincronizada) "♪" else "" }, color = tinta, fontSize = tam, fontWeight = FontWeight.Bold, lineHeight = tam * 1.25f,
                 modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = escala; scaleY = escala; transformOrigin = TransformOrigin(0f, 0.5f) }
                     .clickable(enabled = letra.sincronizada && l.ms >= 0) { vm.ir(l.ms) })
+        }
+    }
+}
+
+// --- 1.3: ❤️, la cola y el temporizador -----------------------------------------------------------------
+
+/** El corazón de Spotify: al tocarlo late y se pinta del morado de Obsidian. */
+@Composable
+fun Corazon(vm: VistaModelo, uri: String, tam: androidx.compose.ui.unit.Dp) {
+    val meGusta by vm.meGusta.collectAsStateWithLifecycle()
+    val gusta = uri in meGusta
+    var latido by remember { mutableIntStateOf(0) }
+    val escala = remember { Animatable(1f) }
+    LaunchedEffect(latido) {
+        if (latido > 0) { escala.animateTo(1.3f, tween(110)); escala.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 500f)) }
+    }
+    IconButton({ latido++; vm.alternarMeGusta(uri) }, enabled = uri.isNotEmpty()) {
+        Icon(if (gusta) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (gusta) "Quitar de Tus me gusta" else "Guardar en Tus me gusta",
+            tint = if (gusta) C.acento else C.blanco, modifier = Modifier.size(tam).graphicsLayer { scaleX = escala.value; scaleY = escala.value })
+    }
+}
+
+/** Cuánto falta (se actualiza cada segundo mientras está abierto). */
+@Composable
+private fun textoDormir(e: com.vortexine.player.reproductor.Temporizador.Estado): String {
+    if (e.alFinal) return "Al terminar la canción"
+    var ahora by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+    LaunchedEffect(e.hasta) { while (true) { ahora = android.os.SystemClock.elapsedRealtime(); kotlinx.coroutines.delay(1000) } }
+    val s = ((e.hasta - ahora) / 1000).coerceAtLeast(0)
+    return "%d:%02d".format(s / 60, s % 60)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Dormir(vm: VistaModelo, e: com.vortexine.player.reproductor.Temporizador.Estado, cerrar: () -> Unit) {
+    ModalBottomSheet(cerrar, containerColor = C.tarjeta) {
+        Column(Modifier.padding(bottom = 24.dp)) {
+            Text("Temporizador para dormir", color = C.blanco, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp))
+            Text(if (e.activo) "La música se pausa en " + textoDormir(e).lowercase() else "La música se pausa sola (bajando el volumen) cuando digas.",
+                color = C.tenue, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
+            listOf(5, 15, 30, 45, 60, 90).forEach { m ->
+                Text("$m minutos", color = C.texto, fontSize = 16.sp,
+                    modifier = Modifier.fillMaxWidth().clickable { vm.dormir(m); cerrar() }.padding(horizontal = 24.dp, vertical = 14.dp))
+            }
+            Text("Al terminar la canción", color = C.texto, fontSize = 16.sp,
+                modifier = Modifier.fillMaxWidth().clickable { vm.dormir(-1); cerrar() }.padding(horizontal = 24.dp, vertical = 14.dp))
+            if (e.activo) Text("Apagar el temporizador", color = C.peligro, fontSize = 16.sp,
+                modifier = Modifier.fillMaxWidth().clickable { vm.dormir(0); cerrar() }.padding(horizontal = 24.dp, vertical = 14.dp))
+        }
+    }
+}
+
+/** «A continuación»: lo que suena y lo que viene. Tocar una salta ahí; la X la quita de la cola. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Cola(vm: VistaModelo, s: Sonando, cerrar: () -> Unit) {
+    val siguientes by vm.siguientes.collectAsStateWithLifecycle()
+    val origen by vm.origen.collectAsStateWithLifecycle()
+    ModalBottomSheet(cerrar, containerColor = C.tarjeta, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(0.9f), contentPadding = PaddingValues(bottom = 24.dp)) {
+            item {
+                Text("A continuación", color = C.blanco, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp))
+                Text("Sonando ahora", color = C.texto, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp))
+                Row(Modifier.padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Portada(s.portada, 48.dp)
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        Text(s.titulo, color = C.acento, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(s.artista, color = C.tenue, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                if (siguientes.isNotEmpty()) Text("Lo que sigue" + if (origen.isNotEmpty()) " · de $origen" else "", color = C.texto, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp))
+                else Text("No viene nada después. En el menú de una canción: «Tocar después» o «Agregar a la cola».", color = C.tenue, fontSize = 13.sp,
+                    modifier = Modifier.padding(20.dp))
+            }
+            itemsIndexed(siguientes, key = { i, e -> "${e.indice}-${e.pista.uri}-$i" }) { _, e ->
+                Row(Modifier.animateItem().fillMaxWidth().clickable { vm.saltarA(e.indice) }.padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Portada(e.pista.portada, 48.dp)
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        Text(e.pista.titulo, color = C.texto, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(e.pista.artista, color = C.tenue, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton({ vm.quitarDeCola(e.indice) }) { Icon(Icons.Rounded.Close, "Quitar de la cola", tint = C.tenue) }
+                }
+            }
         }
     }
 }

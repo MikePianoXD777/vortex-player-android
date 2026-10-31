@@ -93,9 +93,20 @@ fun BotonTocar(tocando: Boolean, tam: Dp = 56.dp, habilitado: Boolean = true, al
 
 // --- Portadas -----------------------------------------------------------------------------------------
 
-/** La portada de una playlist: con 4 canciones o más, un mosaico de las primeras 4 (como Spotify). */
+/**
+ * La portada de una playlist: con 4 canciones o más, un mosaico de las primeras 4 (como Spotify).
+ * 1.3: «Tus me gusta» lleva la suya: un degradado morado con el corazón.
+ */
 @Composable
-fun Mosaico(portadas: List<String>, tam: Dp, radio: Dp = 4.dp) {
+fun Mosaico(portadas: List<String>, tam: Dp, radio: Dp = 4.dp, meGusta: Boolean = false) {
+    if (meGusta) {
+        Box(Modifier.size(tam).clip(RoundedCornerShape(radio))
+            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF4A2C9E), C.morado, C.lila))),
+            contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.Favorite, null, tint = C.blanco, modifier = Modifier.size(tam * 0.42f))
+        }
+        return
+    }
     if (portadas.size < 4) {
         if (portadas.isEmpty()) Box(Modifier.size(tam).clip(RoundedCornerShape(radio)).background(C.realceFuerte), contentAlignment = Alignment.Center) {
             Icon(Icons.Rounded.MusicNote, null, tint = C.tenue, modifier = Modifier.size(tam * 0.45f))

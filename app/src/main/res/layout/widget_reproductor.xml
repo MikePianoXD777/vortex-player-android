@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.3: el widget de la pantalla de inicio: la portada, la canción y los controles, como el de Spotify -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/w_raiz"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_fondo"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="10dp">
+
+    <ImageView
+        android:id="@+id/w_portada"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="#363636"
+        android:contentDescription="Portada"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/w_titulo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Vortex Player"
+            android:textColor="#F5F5F5"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/w_artista"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Toca para abrir"
+            android:textColor="#B3B3B3"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/w_anterior"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="Anterior"
+        android:src="@drawable/ic_w_anterior" />
+
+    <ImageButton
+        android:id="@+id/w_tocar"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginHorizontal="4dp"
+        android:background="@drawable/widget_boton"
+        android:contentDescription="Tocar o pausar"
+        android:src="@drawable/ic_w_tocar" />
+
+    <ImageButton
+        android:id="@+id/w_siguiente"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="Siguiente"
+        android:src="@drawable/ic_w_siguiente" />
+</LinearLayout>

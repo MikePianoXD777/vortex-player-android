@@ -16,6 +16,7 @@ import com.vortexine.player.interfaz.MainActivity
  */
 class ServicioReproduccion : MediaSessionService() {
     private var sesion: MediaSession? = null
+    private var fundido: Fundido? = null
 
     @androidx.annotation.OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -34,6 +35,17 @@ class ServicioReproduccion : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         sesion = MediaSession.Builder(this, jugador).setSessionActivity(abrir).build()
         Ecualizador.conectar(sesionAudio)
+        // 1.3: crossfade y el widget de la pantalla de inicio
+        Fundido.cargar(this)
+        fundido = Fundido(this, jugador, sesionAudio).also { it.empezar() }
+        jugador.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onEvents(player: androidx.media3.common.Player, events: androidx.media3.common.Player.Events) {
+                if (events.containsAny(androidx.media3.common.Player.EVENT_MEDIA_ITEM_TRANSITION,
+                        androidx.media3.common.Player.EVENT_IS_PLAYING_CHANGED, androidx.media3.common.Player.EVENT_MEDIA_METADATA_CHANGED))
+                    Widget.pintar(this@ServicioReproduccion, player)
+            }
+        })
+        Widget.pintar(this, jugador)
     }
 
     override fun onGetSession(info: MediaSession.ControllerInfo) = sesion
@@ -44,6 +56,8 @@ class ServicioReproduccion : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        fundido?.soltar()
+        Temporizador.poner(0)
         Ecualizador.soltar()
         sesion?.run {
             player.release()
@@ -51,6 +65,7 @@ class ServicioReproduccion : MediaSessionService() {
         }
         sesion = null
         Jugador.actual = null
+        Widget.pintar(this, null)
         super.onDestroy()
     }
 }
