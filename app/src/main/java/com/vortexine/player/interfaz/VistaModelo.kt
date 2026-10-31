@@ -16,6 +16,7 @@ import com.google.common.util.concurrent.MoreExecutors
 import com.vortexine.player.VortexApp
 import com.vortexine.player.motor.Cancion
 import com.vortexine.player.motor.Descargas
+import com.vortexine.player.motor.Letras
 import com.vortexine.player.motor.Pista
 import com.vortexine.player.motor.Playlist
 import com.vortexine.player.motor.YtMusic
@@ -25,6 +26,10 @@ import com.vortexine.player.motor.Cuenta
 import com.vortexine.player.motor.Sincro
 import com.vortexine.player.segundo.Trabajo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
@@ -76,6 +81,16 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     val recomendando = MutableStateFlow<Long?>(null)
     val escuchando = MutableStateFlow<String?>(null)   // la canción que suena 30 s antes de bajarla
 
+    // 1.2: portadas de las playlists (el mosaico), la letra, «para ti» y desde dónde suena
+    val portadas = MutableStateFlow<Map<Long, List<String>>>(emptyMap())
+    val origen = MutableStateFlow("")
+    val letra = MutableStateFlow<Letras.Letra?>(null)
+    val buscandoLetra = MutableStateFlow(false)
+    val paraTi = MutableStateFlow<List<Cancion>>(emptyList())
+    val paraTiDe = MutableStateFlow<List<String>>(emptyList())   // lo que escuchaste y de donde salen
+    val cargandoParaTi = MutableStateFlow(false)
+    private val sesion = app.getSharedPreferences("sesion", android.content.Context.MODE_PRIVATE)
+
     private var control: MediaController? = null
 
     // 1.1: la cuenta de Google, la sincronización y las actualizaciones
@@ -91,20 +106,27 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             Sincro.estado.map { it.vuelta }.distinctUntilChanged().drop(1).collect { recargar() }
         }
         viewModelScope.launch {
+            var vueltas = 0
             while (isActive) {
                 control?.let { c -> if (c.isPlaying) sonando.update { it.copy(posicion = c.currentPosition) } }
-                delay(500)
+                if (++vueltas % 20 == 0 && control?.isPlaying == true) guardarSesion()   // cada 5 s
+                delay(250)   // 4 veces por segundo: la letra cambia de línea a tiempo
             }
         }
     }
 
     fun recargar() = viewModelScope.launch {
         val (p, l, b) = withContext(Dispatchers.IO) { Triple(bib.pistas(), bib.playlists(), bib.idsBajados()) }
+        portadas.value = withContext(Dispatchers.IO) {
+            val porUri = p.associateBy { it.uri }
+            l.associate { pl -> pl.id to bib.urisDe(pl.id).mapNotNull { porUri[it]?.portada?.takeIf(String::isNotEmpty) }.distinct().take(4) }
+        }
         pistas.value = p
         playlists.value = l
         bajadas.value = b
         cargando.value = false
         actualizarSonando()
+        restaurar()
     }
 
     // --- reproducir ----------------------------------------------------------------------------------
@@ -117,9 +139,15 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             val c = runCatching { futuro.get() }.getOrNull() ?: return@addListener
             control = c
             c.addListener(object : Player.Listener {
-                override fun onEvents(player: Player, events: Player.Events) = actualizarSonando()
+                override fun onEvents(player: Player, events: Player.Events) {
+                    actualizarSonando()
+                    if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED,
+                            Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                            Player.EVENT_REPEAT_MODE_CHANGED)) guardarSesion()
+                }
             })
             actualizarSonando()
+            restaurar()
         }, MoreExecutors.directExecutor())
     }
 
@@ -139,6 +167,101 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             aleatorio = c.shuffleModeEnabled, repetir = c.repeatMode,
             hayAnterior = c.hasPreviousMediaItem() || c.currentPosition > 3000, haySiguiente = c.hasNextMediaItem(),
         )
+        if (uri != ultimaUri) { ultimaUri = uri; cambioDeCancion(sonando.value) }
+    }
+
+    // --- 1.2: seguir donde te quedaste -----------------------------------------------------------------
+
+    private var ultimaUri = ""
+    private var restaurada = false
+
+    /** La cola, la canción, el segundo y de qué playlist venía: para abrir la app y seguir ahí. */
+    private fun guardarSesion() {
+        val c = control ?: return
+        if (c.mediaItemCount == 0 || !restaurada) return
+        sesion.edit()
+            .putString("cola", JSONArray((0 until c.mediaItemCount).map { c.getMediaItemAt(it).mediaId }).toString())
+            .putInt("indice", c.currentMediaItemIndex).putLong("posicion", c.currentPosition)
+            .putBoolean("aleatorio", c.shuffleModeEnabled).putInt("repetir", c.repeatMode)
+            .putString("origen", origen.value).apply()
+    }
+
+    /** Al abrir la app (si el reproductor no seguía vivo): la última canción, en pausa, donde ibas. */
+    private fun restaurar() {
+        val c = control ?: return
+        if (restaurada || cargando.value || pistas.value.isEmpty()) return
+        restaurada = true
+        if (c.mediaItemCount > 0) return
+        val guardadas = runCatching { JSONArray(sesion.getString("cola", "[]")) }.getOrNull()
+            ?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: return
+        val todas = pistas.value.associateBy { it.uri }
+        val lista = guardadas.mapNotNull { todas[it] }
+        if (lista.isEmpty()) return
+        val actual = guardadas.getOrNull(sesion.getInt("indice", 0))
+        val i = lista.indexOfFirst { it.uri == actual }.coerceAtLeast(0)
+        c.setMediaItems(lista.map(::item), i, if (lista[i].uri == actual) sesion.getLong("posicion", 0) else 0)
+        c.shuffleModeEnabled = sesion.getBoolean("aleatorio", false)
+        c.repeatMode = sesion.getInt("repetir", Player.REPEAT_MODE_OFF)
+        origen.value = sesion.getString("origen", "").orEmpty()
+        c.prepare()
+    }
+
+    // --- 1.2: letras e historial -----------------------------------------------------------------------
+
+    private var trabajoLetra: Job? = null
+
+    private fun cambioDeCancion(s: Sonando) {
+        trabajoLetra?.cancel()
+        letra.value = null
+        buscandoLetra.value = false
+        if (s.uri.isEmpty()) return
+        val p = pistas.value.firstOrNull { it.uri == s.uri }
+        if (p != null && restaurada) anotarEscuchada(p)
+        val segundos = ((p?.duracionMs ?: s.duracion) / 1000).toInt()
+        buscandoLetra.value = true
+        trabajoLetra = viewModelScope.launch {
+            letra.value = runCatching {
+                withContext(Dispatchers.IO) { Letras.de(File(getApplication<Application>().filesDir, "letras"), s.titulo, s.artista, segundos, p?.videoId.orEmpty()) }
+            }.getOrNull()
+            buscandoLetra.value = false
+        }
+    }
+
+    private fun historial(): List<YtMusic.Semilla> = runCatching {
+        val a = JSONArray(sesion.getString("historial", "[]"))
+        (0 until a.length()).map { a.getJSONObject(it).let { o -> YtMusic.Semilla(o.optString("id"), o.optString("titulo"), o.optString("artista")) } }
+    }.getOrDefault(emptyList())
+
+    /** Las últimas 25 que escuchaste (sin repetir), para recomendarte en «Buscar». */
+    private fun anotarEscuchada(p: Pista) {
+        val nueva = YtMusic.Semilla(p.videoId, p.titulo, p.artista)
+        val h = (listOf(nueva) + historial().filterNot { it.titulo == p.titulo && it.artista == p.artista }).take(25)
+        sesion.edit().putString("historial", JSONArray(h.map { JSONObject().put("id", it.id).put("titulo", it.titulo).put("artista", it.artista) }).toString()).apply()
+    }
+
+    /** «Para ti»: radios de lo último que escuchaste, sin lo que ya tienes. `otras` cambia las semillas. */
+    fun recomendarParaTi(otras: Boolean = false) {
+        if (cargandoParaTi.value) return
+        val h = historial()
+        val semillas = (if (otras) h.take(10).shuffled() else h).take(3).ifEmpty {
+            pistas.value.shuffled().take(3).map { YtMusic.Semilla(it.videoId, it.titulo, it.artista) }
+        }
+        if (semillas.isEmpty()) return
+        val de = semillas.map { it.titulo }
+        if (!otras && paraTi.value.isNotEmpty() && de == paraTiDe.value) return
+        cargandoParaTi.value = true
+        viewModelScope.launch {
+            val tienes = pistas.value.map { YtMusic.Semilla(it.videoId, it.titulo, it.artista) } +
+                if (otras) paraTi.value.map { YtMusic.Semilla(it.id, it.titulo, it.artistas) } else emptyList()
+            try {
+                paraTi.value = withContext(Dispatchers.IO) { YtMusic.recomendar(semillas, tienes, 25) }
+                paraTiDe.value = de
+            } catch (e: Exception) {
+                if (paraTi.value.isEmpty()) aviso.value = mensaje(e)
+            } finally {
+                cargandoParaTi.value = false
+            }
+        }
     }
 
     private fun item(p: Pista) = MediaItem.Builder().setMediaId(p.uri).setUri(p.uri.toUri())
@@ -146,9 +269,11 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             .setArtworkUri(p.portada.takeIf { it.isNotEmpty() }?.let(Uri::parse)).build()).build()
 
     /** Toca `lista` empezando en `desde` (la cola es la lista entera, como en la PC). */
-    fun tocar(lista: List<Pista>, desde: Int, aleatorio: Boolean = false) {
+    fun tocar(lista: List<Pista>, desde: Int, aleatorio: Boolean = false, de: String = "Tu música") {
         pararAvance()
         val c = control ?: return
+        origen.value = de
+        restaurada = true
         c.setMediaItems(lista.map(::item), desde.coerceIn(0, (lista.size - 1).coerceAtLeast(0)), 0)
         c.shuffleModeEnabled = aleatorio
         c.prepare()
@@ -228,6 +353,9 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /** Al borrar lo que escribiste en «Buscar» vuelve «Para ti». */
+    fun limpiarBusqueda() { resultados.value = emptyList(); enlace.value = null }
 
     private suspend fun leerEnlace(e: YtMusic.Enlace): Pair<String, List<Cancion>> = when {
         e.fuente == "spotify" -> {

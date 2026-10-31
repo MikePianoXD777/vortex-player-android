@@ -86,13 +86,13 @@ fun ElegirPlaylist(playlists: List<Playlist>, alElegir: (Long?, String?) -> Unit
             } else LazyColumn(Modifier.heightIn(max = 360.dp)) {
                 item {
                     ListItem(headlineContent = { Text("Nueva playlist…") },
-                        leadingContent = { Icon(Icons.Rounded.Add, null, tint = C.azul) },
+                        leadingContent = { Icon(Icons.Rounded.Add, null, tint = C.acento) },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         modifier = Modifier.clickable { nueva = "" })
                 }
                 items(playlists, key = { it.id }) { p ->
                     ListItem(headlineContent = { Text(p.nombre) }, supportingContent = { Text(cuantas(p.cuantas)) },
-                        leadingContent = { Icon(Icons.Rounded.QueueMusic, null, tint = C.violeta) },
+                        leadingContent = { Icon(Icons.Rounded.QueueMusic, null, tint = C.lila) },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         modifier = Modifier.clickable { alElegir(p.id, null) })
                 }

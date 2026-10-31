@@ -221,6 +221,24 @@ object YtMusic {
         return salida
     }
 
+    /** La letra que muestra YouTube Music (pestaña «Letra», de Musixmatch); sin tiempos. null si no tiene. */
+    fun letra(videoId: String): String? {
+        val n = JSONObject(pedir("https://music.youtube.com/youtubei/v1/next?prettyPrint=false",
+            JSONObject().put("context", contexto()).put("videoId", videoId).put("isAudioOnly", true).toString()))
+        val tabs = n.optJSONObject("contents")?.optJSONObject("singleColumnMusicWatchNextResultsRenderer")
+            ?.optJSONObject("tabbedRenderer")?.optJSONObject("watchNextTabbedResultsRenderer")?.optJSONArray("tabs") ?: return null
+        val id = (0 until tabs.length()).map { tabs.getJSONObject(it).optJSONObject("tabRenderer")?.optJSONObject("endpoint")
+            ?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty() }.firstOrNull { it.startsWith("MPLY") } ?: return null
+        val b = JSONObject(pedir("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false",
+            JSONObject().put("context", contexto()).put("browseId", id).toString()))
+        val sec = b.optJSONObject("contents")?.optJSONObject("sectionListRenderer")?.optJSONArray("contents") ?: return null
+        for (i in 0 until sec.length()) {
+            val runs = sec.getJSONObject(i).optJSONObject("musicDescriptionShelfRenderer")?.optJSONObject("description")?.optJSONArray("runs") ?: continue
+            return (0 until runs.length()).joinToString("") { runs.getJSONObject(it).optString("text") }.takeIf { it.isNotBlank() }
+        }
+        return null
+    }
+
     fun busquedaDe(p: PistaSpotify) = "${p.artistas.split(",")[0].trim()} ${p.titulo}".trim()
 
     fun codificar(s: String): String = URLEncoder.encode(s, "UTF-8")

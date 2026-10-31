@@ -16,6 +16,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -33,13 +35,13 @@ import com.vortexine.player.reproductor.Ecualizador
 fun FilaPista(p: Pista, sonando: Boolean, alTocar: () -> Unit, menu: @Composable ColumnScope.(cerrar: () -> Unit) -> Unit) {
     var abierto by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = alTocar).background(if (sonando) C.realce else C.fondo)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clickable(onClick = alTocar).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Portada(p.portada, 48.dp)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-            Text(p.titulo, color = if (sonando) C.azul else C.texto, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val tinta by androidx.compose.animation.animateColorAsState(if (sonando) C.acento else C.texto, label = "sonando")
+            Text(p.titulo, color = tinta, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Etiqueta(p.etiqueta, p.nivel)
                 Text((if (p.etiqueta.isNotEmpty()) "  " else "") + p.artista, color = C.tenue, fontSize = 13.sp,
@@ -76,7 +78,7 @@ fun PantallaBiblioteca(vm: VistaModelo) {
                 placeholder = { Text("Buscar en tu música") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
                 shape = RoundedCornerShape(24.dp))
             Spacer(Modifier.width(8.dp))
-            FilledTonalIconButton({ if (vistas.isNotEmpty()) vm.tocar(vistas, (vistas.indices).random(), aleatorio = true) }) {
+            FilledTonalIconButton({ if (vistas.isNotEmpty()) vm.tocar(vistas, (vistas.indices).random(), aleatorio = true, de = "Tu música") }) {
                 Icon(Icons.Rounded.Shuffle, "Aleatorio")
             }
         }
@@ -84,12 +86,12 @@ fun PantallaBiblioteca(vm: VistaModelo) {
             "Busca canciones en «Buscar» o copia tus FLAC a la carpeta Música.")
         LazyColumn(Modifier.fillMaxSize()) {
             items(vistas, key = { it.uri }) { p ->
-                FilaPista(p, p.uri == sonando.uri, { vm.tocar(vistas, vistas.indexOf(p)) }) { cerrar ->
+                Box(Modifier.animateItem()) { FilaPista(p, p.uri == sonando.uri, { vm.tocar(vistas, vistas.indexOf(p), de = "Tu música") }) { cerrar ->
                     DropdownMenuItem({ Text("Agregar a una playlist") }, { cerrar(); paraPlaylist = p },
                         leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) })
                     if (p.videoId.isNotEmpty()) DropdownMenuItem({ Text("Borrar del teléfono") }, { cerrar(); paraBorrar = p },
                         leadingIcon = { Icon(Icons.Rounded.Delete, null, tint = C.peligro) })
-                }
+                } }
             }
         }
     }
@@ -125,13 +127,13 @@ fun FilaCancion(c: Cancion, vm: VistaModelo, playlist: Long? = null, alPlaylist:
             when {
                 bajando != null && bajando.error.isNotEmpty() -> Text(bajando.error, color = C.peligro, fontSize = 12.sp, maxLines = 2)
                 bajando != null -> LinearProgressIndicator({ bajando.progreso }, Modifier.fillMaxWidth().padding(top = 4.dp),
-                    color = C.azul, trackColor = C.borde)
+                    color = C.acento, trackColor = C.borde)
                 c.id in bajadas -> Text("En tu biblioteca", color = C.exito, fontSize = 12.sp)
             }
         }
         if (c.id in bajadas) Icon(Icons.Rounded.CheckCircle, "Ya la tienes", tint = C.exito, modifier = Modifier.padding(12.dp))
-        else if (bajando?.error?.isNotEmpty() == true) IconButton({ vm.olvidarError(c.id); vm.bajar(c, playlist) }) { Icon(Icons.Rounded.Refresh, "Reintentar", tint = C.azul) }
-        else IconButton({ vm.bajar(c, playlist) }, enabled = bajando == null) { Icon(Icons.Rounded.Download, "Bajar", tint = if (bajando == null) C.azul else C.borde) }
+        else if (bajando?.error?.isNotEmpty() == true) IconButton({ vm.olvidarError(c.id); vm.bajar(c, playlist) }) { Icon(Icons.Rounded.Refresh, "Reintentar", tint = C.acento) }
+        else IconButton({ vm.bajar(c, playlist) }, enabled = bajando == null) { Icon(Icons.Rounded.Download, "Bajar", tint = if (bajando == null) C.acento else C.borde) }
         IconButton({ alPlaylist(c) }) { Icon(Icons.Rounded.PlaylistAdd, "Bajar a una playlist", tint = C.suave) }
     }
 }
@@ -142,8 +144,13 @@ fun PantallaBuscar(vm: VistaModelo) {
     val buscando by vm.buscando.collectAsStateWithLifecycle()
     val enlace by vm.enlace.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
+    val paraTi by vm.paraTi.collectAsStateWithLifecycle()
+    val paraTiDe by vm.paraTiDe.collectAsStateWithLifecycle()
+    val cargandoParaTi by vm.cargandoParaTi.collectAsStateWithLifecycle()
     var texto by rememberSaveable { mutableStateOf("") }
     var paraPlaylist by remember { mutableStateOf<Cancion?>(null) }
+    val sinBusqueda = !buscando && resultados.isEmpty() && enlace == null
+    LaunchedEffect(sinBusqueda) { if (sinBusqueda) vm.recomendarParaTi() }
     val foco = LocalFocusManager.current
     val teclado = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
@@ -151,11 +158,11 @@ fun PantallaBuscar(vm: VistaModelo) {
         Titulo("Buscar", "Canciones de YouTube Music, o pega un enlace de YouTube o Spotify")
         OutlinedTextField(texto, { texto = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp), singleLine = true,
             placeholder = { Text("Canción, artista o enlace") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
-            trailingIcon = { if (texto.isNotEmpty()) IconButton({ texto = "" }) { Icon(Icons.Rounded.Close, "Borrar") } },
+            trailingIcon = { if (texto.isNotEmpty()) IconButton({ texto = ""; vm.limpiarBusqueda() }) { Icon(Icons.Rounded.Close, "Borrar") } },
             shape = RoundedCornerShape(24.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { teclado?.hide(); foco.clearFocus(); vm.buscar(texto) }))
-        if (buscando) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp), color = C.azul, trackColor = C.borde)
+        if (buscando) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp), color = C.acento, trackColor = C.borde)
         LazyColumn(Modifier.fillMaxSize()) {
             enlace?.let { (nombre, lista) ->
                 item {
@@ -174,9 +181,23 @@ fun PantallaBuscar(vm: VistaModelo) {
                 items(lista, key = { "e" + it.id }) { FilaCancion(it, vm) { c -> paraPlaylist = c } }
             }
             items(resultados, key = { it.id }) { FilaCancion(it, vm) { c -> paraPlaylist = c } }
-            if (!buscando && resultados.isEmpty() && enlace == null) item {
-                Vacio(Icons.Rounded.Headphones, "Busca lo que quieras oír",
-                    "Toca la portada para escuchar 30 segundos antes de bajarla.")
+            if (sinBusqueda) {
+                item {
+                    Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Para ti", color = C.blanco, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text(if (paraTiDe.isEmpty()) "Según lo último que escuchaste" else "Porque escuchaste " + paraTiDe.joinToString(", "),
+                                color = C.tenue, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                        TextButton({ vm.recomendarParaTi(otras = true) }, enabled = !cargandoParaTi) { Text("Otras") }
+                    }
+                    if (cargandoParaTi) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp), color = C.acento, trackColor = C.borde)
+                }
+                items(paraTi, key = { "t" + it.id }) { c -> Box(Modifier.animateItem()) { FilaCancion(c, vm) { paraPlaylist = it } } }
+                if (paraTi.isEmpty() && !cargandoParaTi) item {
+                    Vacio(Icons.Rounded.Headphones, "Busca lo que quieras oír",
+                        "Toca la portada para escuchar 30 segundos antes de bajarla.")
+                }
             }
         }
     }
@@ -190,6 +211,7 @@ fun PantallaBuscar(vm: VistaModelo) {
 @Composable
 fun PantallaPlaylists(vm: VistaModelo, abrir: (Long) -> Unit) {
     val playlists by vm.playlists.collectAsStateWithLifecycle()
+    val portadas by vm.portadas.collectAsStateWithLifecycle()
     var nueva by remember { mutableStateOf(false) }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -201,17 +223,14 @@ fun PantallaPlaylists(vm: VistaModelo, abrir: (Long) -> Unit) {
         if (playlists.isEmpty()) Vacio(Icons.Rounded.QueueMusic, "Sin playlists", "Crea una y agrégale canciones desde tu música o Buscar.")
         LazyColumn {
             items(playlists, key = { it.id }) { p ->
-                ListItem(
-                    headlineContent = { Text(p.nombre, fontWeight = FontWeight.Medium) },
-                    supportingContent = { Text(cuantas(p.cuantas), color = C.tenue) },
-                    leadingContent = {
-                        Box(Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(C.realceFuerte), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.QueueMusic, null, tint = C.violeta)
-                        }
-                    },
-                    colors = ListItemDefaults.colors(containerColor = C.fondo),
-                    modifier = Modifier.clickable { abrir(p.id) },
-                )
+                Row(Modifier.animateItem().fillMaxWidth().clickable { abrir(p.id) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Mosaico(portadas[p.id].orEmpty(), 64.dp)
+                    Column(Modifier.padding(start = 14.dp)) {
+                        Text(p.nombre, color = C.texto, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Playlist · " + cuantas(p.cuantas), color = C.tenue, fontSize = 13.sp)
+                    }
+                }
             }
         }
     }
@@ -225,7 +244,10 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
     val sonando by vm.sonando.collectAsStateWithLifecycle()
     val recomendadas by vm.recomendadas.collectAsStateWithLifecycle()
     val recomendando by vm.recomendando.collectAsStateWithLifecycle()
+    val portadas by vm.portadas.collectAsStateWithLifecycle()
     val p = playlists.firstOrNull { it.id == id } ?: run { LaunchedEffect(Unit) { volver() }; return }
+    val mosaico = portadas[id].orEmpty()
+    val color = colorAnimado(mosaico.firstOrNull().orEmpty())
     val dentro = remember(pistas, playlists) { vm.pistasDe(id) }
     var renombrar by remember { mutableStateOf(false) }
     var borrar by remember { mutableStateOf(false) }
@@ -233,30 +255,37 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
 
     LaunchedEffect(id, dentro.isNotEmpty()) { if (dentro.isNotEmpty() && id !in recomendadas) vm.recomendar(id) }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    val sonandoAqui = sonando.tocando && dentro.any { it.uri == sonando.uri }
+    LazyColumn(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(color, C.fondo), endY = 1400f))) {
         item {
             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(volver) { Icon(Icons.Rounded.ArrowBack, "Volver") }
+                IconButton(volver) { Icon(Icons.Rounded.ArrowBack, "Volver", tint = C.blanco) }
                 Spacer(Modifier.weight(1f))
-                IconButton({ renombrar = true }) { Icon(Icons.Rounded.Edit, "Renombrar", tint = C.tenue) }
-                IconButton({ borrar = true }) { Icon(Icons.Rounded.Delete, "Borrar playlist", tint = C.peligro) }
             }
-            Titulo(p.nombre, cuantas(dentro.size))
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                Button({ vm.tocar(dentro, 0) }, enabled = dentro.isNotEmpty()) {
-                    Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(4.dp)); Text("Tocar")
+            Box(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 16.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.graphicsLayerSombra()) { Mosaico(mosaico, 220.dp, 4.dp) }
+            }
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Text(p.nombre, color = C.blanco, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(cuantas(dentro.size) + duracionTotal(dentro), color = C.suave, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+            Row(Modifier.padding(start = 8.dp, end = 20.dp, top = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton({ vm.tocar(dentro, dentro.indices.random(), aleatorio = true, de = p.nombre) }, enabled = dentro.isNotEmpty()) {
+                    Icon(Icons.Rounded.Shuffle, "Aleatorio", tint = C.suave)
                 }
-                Spacer(Modifier.width(8.dp))
-                OutlinedButton({ vm.tocar(dentro, dentro.indices.random(), aleatorio = true) }, enabled = dentro.isNotEmpty()) {
-                    Icon(Icons.Rounded.Shuffle, null); Spacer(Modifier.width(4.dp)); Text("Aleatorio")
+                IconButton({ renombrar = true }) { Icon(Icons.Rounded.Edit, "Renombrar", tint = C.suave) }
+                IconButton({ borrar = true }) { Icon(Icons.Rounded.DeleteOutline, "Borrar playlist", tint = C.suave) }
+                Spacer(Modifier.weight(1f))
+                BotonTocar(sonandoAqui, 56.dp, dentro.isNotEmpty()) {
+                    if (dentro.any { it.uri == sonando.uri }) vm.pausarOSeguir() else vm.tocar(dentro, 0, de = p.nombre)
                 }
             }
         }
         items(dentro, key = { "p" + it.uri }) { t ->
-            FilaPista(t, t.uri == sonando.uri, { vm.tocar(dentro, dentro.indexOf(t)) }) { cerrar ->
+            Box(Modifier.animateItem()) { FilaPista(t, t.uri == sonando.uri, { vm.tocar(dentro, dentro.indexOf(t), de = p.nombre) }) { cerrar ->
                 DropdownMenuItem({ Text("Quitar de la playlist") }, { cerrar(); vm.quitarDe(id, t) },
                     leadingIcon = { Icon(Icons.Rounded.RemoveCircleOutline, null) })
-            }
+            } }
         }
         if (dentro.isEmpty()) item { Vacio(Icons.Rounded.QueueMusic, "Está vacía", "Agrégale canciones desde tu música o desde Buscar.") }
         if (dentro.isNotEmpty()) item {
@@ -264,9 +293,9 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
                 Text("Recomendadas para esta playlist", color = C.texto, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 TextButton({ vm.recomendar(id) }, enabled = recomendando == null) { Text("Otras") }
             }
-            if (recomendando == id) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp), color = C.violeta, trackColor = C.borde)
+            if (recomendando == id) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp), color = C.lila, trackColor = C.borde)
         }
-        items(recomendadas[id].orEmpty(), key = { "r" + it.id }) { c -> FilaCancion(c, vm, id) { vm.bajar(it, id) } }
+        items(recomendadas[id].orEmpty(), key = { "r" + it.id }) { c -> Box(Modifier.animateItem()) { FilaCancion(c, vm, id) { vm.bajar(it, id) } } }
     }
     if (renombrar) PedirTexto("Renombrar", p.nombre, "Guardar", { vm.renombrar(id, it); renombrar = false }) { renombrar = false }
     if (borrar) AlertDialog({ borrar = false }, containerColor = C.tarjeta, title = { Text("¿Borrar «${p.nombre}»?") },
@@ -293,7 +322,10 @@ fun PantallaEcualizador() {
             Vacio(Icons.Rounded.GraphicEq, "Toca una canción primero", "El ecualizador se prende junto con el reproductor.")
             return
         }
-        if (estado.preajustes.isNotEmpty()) LazyRowPreajustes(estado.preajustes) { Ecualizador.preajuste(it); estado = Ecualizador.estado() }
+        Text("Perfiles", color = C.texto, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 4.dp))
+        Perfiles(estado.perfiles, estado.perfil) { Ecualizador.perfil(it); estado = Ecualizador.estado() }
+        Text(if (estado.perfil == Ecualizador.PERSONALIZADO) "Personalizado" else estado.perfil, color = C.tenue, fontSize = 13.sp,
+            modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp))
         estado.bandas.forEachIndexed { i, b ->
             Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                 Row {
@@ -304,15 +336,41 @@ fun PantallaEcualizador() {
                     Ecualizador.poner(i, v.toInt())
                     estado = estado.copy(bandas = estado.bandas.toMutableList().also { it[i] = b.copy(nivel = v.toInt()) })
                 }, valueRange = estado.min.toFloat()..estado.max.toFloat(), enabled = estado.encendido,
-                    colors = SliderDefaults.colors(thumbColor = C.violeta, activeTrackColor = C.violeta, inactiveTrackColor = C.borde))
+                    colors = SliderDefaults.colors(thumbColor = C.lila, activeTrackColor = C.lila, inactiveTrackColor = C.borde))
             }
         }
     }
 }
 
+/** Los perfiles en dos filas que se deslizan de lado; el elegido se marca en morado. */
 @Composable
-private fun LazyRowPreajustes(nombres: List<String>, alElegir: (Int) -> Unit) {
-    androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(nombres.size) { i -> AssistChip({ alElegir(i) }, { Text(nombres[i]) }) }
+private fun Perfiles(nombres: List<String>, actual: String, alElegir: (String) -> Unit) {
+    val filas = nombres.chunked((nombres.size + 1) / 2)
+    Column(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        filas.forEach { fila ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                fila.forEach { n ->
+                    FilterChip(n == actual, { alElegir(n) }, { Text(n) },
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = C.morado, selectedLabelColor = C.blanco,
+                            containerColor = C.tarjeta, labelColor = C.suave),
+                        border = null)
+                }
+            }
+        }
     }
+}
+
+private fun duracionTotal(l: List<Pista>): String {
+    val min = l.sumOf { it.duracionMs } / 60_000
+    return when {
+        min <= 0 -> ""
+        min < 60 -> " · $min min"
+        else -> " · ${min / 60} h ${min % 60} min"
+    }
+}
+
+/** Sombra suave bajo la portada grande de la playlist. */
+private fun Modifier.graphicsLayerSombra() = graphicsLayer {
+    shadowElevation = 32f; shape = RoundedCornerShape(4.dp); clip = false
 }
