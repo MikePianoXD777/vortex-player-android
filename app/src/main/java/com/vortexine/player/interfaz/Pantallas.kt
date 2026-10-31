@@ -70,6 +70,7 @@ fun PantallaBiblioteca(vm: VistaModelo) {
 
     Column {
         Titulo("Tu música", if (cargando) "Leyendo tu música…" else cuantas(pistas.size) + if (hires > 0) " · $hires Hi-Res" else "")
+        AvisoNube(vm)
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(filtro, { filtro = it }, Modifier.weight(1f), singleLine = true,
                 placeholder = { Text("Buscar en tu música") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },

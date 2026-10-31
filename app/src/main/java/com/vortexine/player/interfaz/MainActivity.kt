@@ -24,5 +24,22 @@ class MainActivity : ComponentActivity() {
             else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
         })
         setContent { TemaVortex { App(vm) } }
+        com.vortexine.player.segundo.Trabajo.programar(this)
+        com.vortexine.player.segundo.Trabajo.ahora(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        visible = true
+    }
+
+    override fun onPause() {
+        visible = false
+        super.onPause()
+    }
+
+    companion object {
+        /** Para saber si se puede abrir la ventana de «¿Actualizar?» o hay que avisar con una notificación. */
+        @Volatile var visible = false
     }
 }

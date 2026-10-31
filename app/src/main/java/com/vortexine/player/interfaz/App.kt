@@ -25,6 +25,7 @@ private val PESTANAS = listOf(
     Triple("Buscar", Icons.Rounded.Search, 1),
     Triple("Playlists", Icons.Rounded.QueueMusic, 2),
     Triple("Ecualizador", Icons.Rounded.GraphicEq, 3),
+    Triple("Ajustes", Icons.Rounded.Settings, 4),
 )
 
 @Composable
@@ -67,7 +68,8 @@ fun App(vm: VistaModelo) {
                     0 -> PantallaBiblioteca(vm)
                     1 -> PantallaBuscar(vm)
                     2 -> if (abierta == null) PantallaPlaylists(vm) { abierta = it } else PantallaPlaylist(vm, abierta!!) { abierta = null }
-                    else -> PantallaEcualizador()
+                    3 -> PantallaEcualizador()
+                    else -> PantallaAjustes(vm)
                 }
             }
         }

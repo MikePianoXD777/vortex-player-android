@@ -20,7 +20,14 @@ import com.vortexine.player.motor.Pista
 import com.vortexine.player.motor.Playlist
 import com.vortexine.player.motor.YtMusic
 import com.vortexine.player.reproductor.ServicioReproduccion
+import com.vortexine.player.motor.Actualizador
+import com.vortexine.player.motor.Cuenta
+import com.vortexine.player.motor.Sincro
+import com.vortexine.player.segundo.Trabajo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -71,9 +78,18 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
 
     private var control: MediaController? = null
 
+    // 1.1: la cuenta de Google, la sincronización y las actualizaciones
+    val cuenta = Cuenta.datos
+    val sincro = Sincro.estado
+    val nueva = Actualizador.hay
+    val instalando = Actualizador.instalando
+
     init {
         recargar()
         conectar()
+        viewModelScope.launch {   // lo que baja la sincronización aparece en la biblioteca
+            Sincro.estado.map { it.vuelta }.distinctUntilChanged().drop(1).collect { recargar() }
+        }
         viewModelScope.launch {
             while (isActive) {
                 control?.let { c -> if (c.isPlaying) sonando.update { it.copy(posicion = c.currentPosition) } }
@@ -236,7 +252,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         if (c.id in bajadas.value) {
             if (playlist != null) viewModelScope.launch(Dispatchers.IO) {
                 bib.uriDeBajada(c.id)?.let { bib.agregarA(playlist, it) }
-                withContext(Dispatchers.Main) { recargar(); aviso.value = "Agregada a la playlist." }
+                withContext(Dispatchers.Main) { recargar(); cambio(); aviso.value = "Agregada a la playlist." }
             }
             return
         }
@@ -257,13 +273,18 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         trabajando = true
         vapp.alcance.launch {
             try {
-                val uri = Descargas.bajar(getApplication(), c, progreso = { p ->
-                    cola.update { l -> l.map { if (it.cancion.id == c.id) it.copy(progreso = p) else it } }
-                })
-                bib.recordarBajada(c, uri)
+                while (c.id in Sincro.enCurso) delay(1000)   // la está bajando la sincronización
+                Sincro.enCurso.add(c.id)
+                val uri = try {
+                    bib.uriDeBajada(c.id) ?: Descargas.bajar(getApplication(), c, progreso = { p ->
+                        cola.update { l -> l.map { if (it.cancion.id == c.id) it.copy(progreso = p) else it } }
+                    }).also { bib.recordarBajada(c, it) }
+                } finally {
+                    Sincro.enCurso.remove(c.id)
+                }
                 playlist?.let { bib.agregarA(it, bib.normal(uri)) }
                 cola.update { l -> l.filterNot { it.cancion.id == c.id } }
-                withContext(Dispatchers.Main) { recargar() }
+                withContext(Dispatchers.Main) { recargar(); cambio() }
             } catch (e: Exception) {
                 cola.update { l -> l.map { if (it.cancion.id == c.id) it.copy(error = mensaje(e)) else it } }
             }
@@ -283,18 +304,65 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     fun nuevaPlaylist(nombre: String): Long {
         val id = bib.nuevaPlaylist(nombre.ifBlank { "Mi playlist" })
         recargar()
+        cambio()
         return id
     }
 
-    fun renombrar(id: Long, nombre: String) { if (nombre.isNotBlank()) { bib.renombrarPlaylist(id, nombre); recargar() } }
-    fun borrarPlaylist(id: Long) { bib.borrarPlaylist(id); recargar() }
-    fun agregarA(id: Long, p: Pista) { bib.agregarA(id, p.uri); recargar(); aviso.value = "Agregada." }
-    fun quitarDe(id: Long, p: Pista) { bib.quitarDe(id, p.uri); recargar() }
+    fun renombrar(id: Long, nombre: String) { if (nombre.isNotBlank()) { bib.renombrarPlaylist(id, nombre); recargar(); cambio() } }
+    fun borrarPlaylist(id: Long) { bib.borrarPlaylist(id); recargar(); cambio() }
+    fun agregarA(id: Long, p: Pista) { bib.agregarA(id, p.uri); recargar(); cambio(); aviso.value = "Agregada." }
+    fun quitarDe(id: Long, p: Pista) { bib.quitarDe(id, p.uri); recargar(); cambio() }
 
     fun borrar(p: Pista) = viewModelScope.launch {
         val ok = withContext(Dispatchers.IO) { bib.borrar(p) }
         aviso.value = if (ok) "Borrada del teléfono." else "Android no dejó borrarla."
         recargar()
+        if (ok) cambio()
+    }
+
+    // --- cuenta de Google, sincronizar y actualizar (1.1) ---------------------------------------------
+
+    /** Algo cambió aquí: en un rato se sube a la nube. */
+    private fun cambio() = Trabajo.cambio(getApplication())
+
+    fun conectarCuenta(token: String) = viewModelScope.launch {
+        try {
+            Cuenta.conectar(getApplication(), token)
+            aviso.value = "Listo: tu música se va a sincronizar con la de la compu."
+            Trabajo.ahora(getApplication())
+        } catch (e: Exception) {
+            aviso.value = mensaje(e)
+        }
+    }
+
+    fun sincronizarAhora() {
+        Trabajo.ahora(getApplication())
+        aviso.value = "Sincronizando…"
+    }
+
+    fun cerrarSesion() = viewModelScope.launch {
+        Cuenta.cerrar(getApplication())
+        aviso.value = "Sesión cerrada. Tus canciones se quedan en el teléfono."
+    }
+
+    fun revisarActualizacion() = viewModelScope.launch {
+        try {
+            val v = withContext(Dispatchers.IO) { Actualizador.revisar(getApplication(), instalar = false) }
+            if (v == null) aviso.value = "Ya tienes la versión más nueva."
+        } catch (e: Exception) {
+            aviso.value = mensaje(e)
+        }
+    }
+
+    fun actualizarAhora() {
+        val v = Actualizador.hay.value ?: return
+        vapp.alcance.launch {
+            try {
+                Actualizador.instalar(getApplication(), v)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { aviso.value = mensaje(e) }
+            }
+        }
     }
 
     /** «Recomendadas para esta playlist»: la radio de YouTube Music de hasta 3 canciones al azar. */

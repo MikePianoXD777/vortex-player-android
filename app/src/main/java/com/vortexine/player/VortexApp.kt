@@ -20,5 +20,7 @@ class VortexApp : Application() {
         NewPipe.init(DescargadorNewPipe(), Localization("es", "MX"), ContentCountry("MX"))
         biblioteca = Biblioteca(this)
         com.vortexine.player.reproductor.Ecualizador.iniciar(this)
+        com.vortexine.player.motor.Cuenta.cargar(this)
+        com.vortexine.player.motor.Sincro.cargar(this)
     }
 }

@@ -9,10 +9,14 @@ android {
 
     defaultConfig {
         applicationId = "com.vortexine.player"
-        minSdk = 23          // Android 6.0: casi todos los teléfonos que siguen en uso
+        minSdk = 24          // Android 7.0 (lo pide el inicio de sesión de Google); casi todos los teléfonos en uso
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+        // De dónde se bajan las versiones nuevas (para probar: -PfuenteActualizaciones=http://10.0.2.2:8765/ultima.json)
+        val fuente = (project.findProperty("fuenteActualizaciones") as String?)
+            ?: "https://api.github.com/repos/MikePianoXD777/vortex-player-android/releases/latest"
+        buildConfigField("String", "ACTUALIZACIONES", "\"$fuente\"")
     }
 
     buildTypes {
@@ -28,7 +32,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true   // NewPipeExtractor usa java.time y más de Java 11
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources.excludes += setOf("META-INF/*.md", "META-INF/LICENSE*", "META-INF/NOTICE*") }
 }
 
@@ -52,6 +56,9 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
+    implementation("com.google.android.gms:play-services-auth:22.0.0")   // iniciar sesión con Google (Drive)
+    implementation("androidx.work:work-runtime-ktx:2.12.0")              // sincronizar y actualizar en segundo plano
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
     testImplementation("junit:junit:4.13.2")
