@@ -1,0 +1,11 @@
+# NewPipeExtractor usa reflexión y Rhino (para descifrar las URL de YouTube)
+-keep class org.schabi.newpipe.extractor.** { *; }
+-keep class org.mozilla.javascript.** { *; }
+-keep class org.mozilla.classfile.** { *; }
+-dontwarn org.mozilla.javascript.**
+-dontwarn javax.script.**
+-dontwarn java.beans.**
+-dontwarn jdk.dynalink.**
+-dontwarn com.google.re2j.**
+-dontwarn org.jsoup.**
+-dontwarn javax.annotation.**

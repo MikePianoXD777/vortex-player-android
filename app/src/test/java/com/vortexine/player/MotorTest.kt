@@ -1,0 +1,78 @@
+package com.vortexine.player
+
+import com.vortexine.player.motor.Calidad
+import com.vortexine.player.motor.Descargas
+import com.vortexine.player.motor.Cancion
+import com.vortexine.player.motor.YtMusic
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/** Lo mismo que prueba `test_motor.py` de Vortex Player en la PC, para el motor del teléfono. */
+class MotorTest {
+    @Test fun enlaces() {
+        assertEquals(YtMusic.Enlace("youtube", "cancion", "dQw4w9WgXcQ"), YtMusic.tipoDe("https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=x"))
+        assertEquals(YtMusic.Enlace("youtube", "cancion", "dQw4w9WgXcQ"), YtMusic.tipoDe("youtu.be/dQw4w9WgXcQ"))
+        assertEquals(YtMusic.Enlace("youtube", "playlist", "PLabc"), YtMusic.tipoDe("https://www.youtube.com/playlist?list=PLabc"))
+        assertEquals(YtMusic.Enlace("spotify", "album", "4aawyAB9vmqN3uQ7FjRGTy"),
+            YtMusic.tipoDe("https://open.spotify.com/intl-es/album/4aawyAB9vmqN3uQ7FjRGTy?si=1"))
+        assertEquals(YtMusic.Enlace("spotify", "track", "abc123"), YtMusic.tipoDe("spotify:track:abc123"))
+        assertNull(YtMusic.tipoDe("idol yoasobi"))
+    }
+
+    @Test fun etiquetas() {
+        assertEquals("Hi-Res 24/96", Calidad.etiqueta("flac", 24, 96000, 0))
+        assertEquals("CD 16/44,1", Calidad.etiqueta("flac", 16, 44100, 0))
+        assertEquals("Hi-Res 88,2 kHz", Calidad.etiqueta("alac", 0, 88200, 0))
+        assertEquals("Opus 160 kbps", Calidad.etiqueta("opus", 0, 48000, 160))
+        assertEquals("hires", Calidad.nivel("flac", 24, 48000))
+        assertEquals("comprimida", Calidad.nivel("aac", 0, 44100))
+        assertEquals("flac", Calidad.codecDeMime("audio/flac"))
+        assertEquals("aac", Calidad.codecDeMime("audio/mp4a-latm"))
+    }
+
+    @Test fun duraciones_y_claves() {
+        assertEquals(214, YtMusic.segundos("3:34"))
+        assertEquals(3723, YtMusic.segundos("1:02:03"))
+        assertEquals(0, YtMusic.segundos("2023"))
+        assertEquals(YtMusic.clave("Idol", "YOASOBI"), YtMusic.clave("idol (from Oshi no Ko)", "YOASOBI, Ayase"))
+    }
+
+    @Test fun nombre_de_archivo_lleva_el_id() {
+        assertEquals("YOASOBI - Idol [ZRtdQ81jPUQ].mka",
+            Descargas.nombreArchivo(Cancion("ZRtdQ81jPUQ", "Idol", "YOASOBI, Ayase"), "mka"))
+        assertEquals("AC DC - Back in Black [x].m4a", Descargas.nombreArchivo(Cancion("x", "Back in Black", "AC/DC"), "m4a"))
+    }
+
+    private val busqueda = """{"contents":{"tabbedSearchResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[
+        {"musicShelfRenderer":{"contents":[{"musicResponsiveListItemRenderer":{
+          "playlistItemData":{"videoId":"ZRtdQ81jPUQ"},
+          "thumbnail":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://lh3/x=w60-h60-l90"},{"url":"https://lh3/x=w120-h120-l90"}]}}},
+          "flexColumns":[
+            {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"アイドル"}]}}},
+            {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"YOASOBI"},{"text":" • "},{"text":"アイドル"},{"text":" • "},{"text":"3:34"}]}}}
+          ]}}]}}]}}}}]}}}"""
+
+    @Test fun leer_busqueda_de_youtube_music() {
+        val r = YtMusic.leerBusqueda(busqueda)
+        assertEquals(1, r.size)
+        assertEquals(Cancion("ZRtdQ81jPUQ", "アイドル", "YOASOBI", "アイドル", 214, "https://lh3/x=w226-h226-l90"), r[0])
+    }
+
+    @Test fun recomendaciones_intercaladas_sin_lo_que_tienes() {
+        fun radio(vararg c: Pair<String, String>) = """{"contents":[${c.joinToString(",") { (id, t) ->
+            """{"playlistPanelVideoRenderer":{"videoId":"$id","title":{"runs":[{"text":"$t"}]},"longBylineText":{"runs":[{"text":"Art • Album • 2024"}]},"lengthText":{"runs":[{"text":"3:00"}]}}}"""
+        }}]}"""
+        val radios = mapOf("a" to radio("a" to "A", "x1" to "X1", "x2" to "X2"), "b" to radio("b" to "B", "y1" to "Y1", "x1" to "X1"))
+        YtMusic.pedir = { _, cuerpo -> radios.getValue(org.json.JSONObject(cuerpo).getString("videoId")) }
+        try {
+            val r = YtMusic.recomendar(listOf(YtMusic.Semilla("a", "A", "Art"), YtMusic.Semilla("b", "B", "Art")),
+                tienes = listOf(YtMusic.Semilla("", "X2", "Art")))
+            assertEquals(listOf("x1", "y1"), r.map { it.id })
+            assertEquals("Album", r[0].album)
+            assertEquals(180, r[0].duracion)
+        } finally {
+            YtMusic.pedir = com.vortexine.player.motor.Red::pedirJson
+        }
+    }
+}
