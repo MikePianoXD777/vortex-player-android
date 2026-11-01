@@ -11,8 +11,8 @@ android {
         applicationId = "com.vortexine.player"
         minSdk = 24          // Android 7.0 (lo pide el inicio de sesión de Google); casi todos los teléfonos en uso
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.3.0"
+        versionCode = 6
+        versionName = "1.3.1"
         // De dónde se bajan las versiones nuevas (para probar: -PfuenteActualizaciones=http://10.0.2.2:8765/ultima.json)
         val fuente = (project.findProperty("fuenteActualizaciones") as String?)
             ?: "https://api.github.com/repos/MikePianoXD777/vortex-player-android/releases/latest"

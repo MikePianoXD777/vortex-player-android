@@ -2,6 +2,7 @@ package com.vortexine.player.motor
 
 import android.content.ContentValues
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -148,12 +149,26 @@ object Descargas {
                 archivo.delete()
                 ""
             } else {
+                // 1.3.1: sin DURATION (ni fecha), la biblioteca no la mostraba: pide más de 20 s y ordena por fecha
+                val ms = runCatching {
+                    MediaMetadataRetriever().run {
+                        try { setDataSource(archivo.absolutePath); extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() }
+                        finally { release() }
+                    }
+                }.getOrNull()?.takeIf { it > 0 } ?: (c.duracion * 1000L)
                 val valores = ContentValues().apply {
                     @Suppress("DEPRECATION") put(MediaStore.Audio.Media.DATA, archivo.absolutePath)
+                    put(MediaStore.Audio.Media.DISPLAY_NAME, nombre)
                     put(MediaStore.Audio.Media.TITLE, c.titulo); put(MediaStore.Audio.Media.ARTIST, c.artistas)
                     put(MediaStore.Audio.Media.ALBUM, c.album); put(MediaStore.Audio.Media.MIME_TYPE, mime)
+                    put(MediaStore.Audio.Media.DURATION, ms); put(MediaStore.Audio.Media.SIZE, archivo.length())
+                    put(MediaStore.Audio.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    put(MediaStore.Audio.Media.DATE_MODIFIED, archivo.lastModified() / 1000)
                     put(MediaStore.Audio.Media.IS_MUSIC, 1)
                 }
+                // si la bajaste antes y la borraste, Android deja la fila vieja con esa ruta y el insert falla
+                @Suppress("DEPRECATION")
+                runCatching { cr.delete(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, "${MediaStore.Audio.Media.DATA} = ?", arrayOf(archivo.absolutePath)) }
                 (runCatching { cr.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, valores) }.getOrNull()
                     ?: Uri.fromFile(archivo)).toString()
             }
