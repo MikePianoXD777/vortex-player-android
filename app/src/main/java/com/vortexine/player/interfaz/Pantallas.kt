@@ -65,6 +65,11 @@ fun ColumnScope.OpcionesCancion(vm: VistaModelo, p: Pista, gusta: Boolean, cerra
         leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, null) })
     DropdownMenuItem({ Text("Agregar a la cola") }, { cerrar(); vm.agregarACola(p) },
         leadingIcon = { Icon(Icons.Rounded.AddToQueue, null) })
+    // 1.5: «Iniciar radio» y compartir (por WhatsApp o lo que elijas)
+    DropdownMenuItem({ Text("Iniciar radio") }, { cerrar(); vm.iniciarRadio(p) },
+        leadingIcon = { Icon(Icons.Rounded.Radio, null) })
+    DropdownMenuItem({ Text("Compartir") }, { cerrar(); vm.compartir(p) },
+        leadingIcon = { Icon(Icons.Rounded.Share, null) })
 }
 
 @Composable
@@ -87,6 +92,7 @@ fun PantallaBiblioteca(vm: VistaModelo, verResumen: () -> Unit = {}) {
         Titulo("Tu música", if (cargando) "Leyendo tu música…" else cuantas(pistas.size) + if (hires > 0) " · $hires Hi-Res" else "")
         AvisoNube(vm)
         AvisoResumen(vm, verResumen)
+        TarjetaMezcla(vm)
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(filtro, { filtro = it }, Modifier.weight(1f), singleLine = true,
                 placeholder = { Text("Buscar en tu música") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
@@ -118,6 +124,60 @@ fun PantallaBiblioteca(vm: VistaModelo, verResumen: () -> Unit = {}) {
             text = { Text("Se quita del teléfono y de tus playlists.") },
             confirmButton = { TextButton({ vm.borrar(p); paraBorrar = null }) { Text("Borrar", color = C.peligro) } },
             dismissButton = { TextButton({ paraBorrar = null }) { Text("Cancelar") } })
+    }
+}
+
+/** 1.5: «Tu mezcla del día»: lo que más escuchas revuelto con parecidas que no tienes. */
+@Composable
+private fun TarjetaMezcla(vm: VistaModelo) {
+    val m by vm.mezcla.collectAsStateWithLifecycle()
+    val pistas by vm.pistas.collectAsStateWithLifecycle()
+    val portadas = remember(m, pistas) { com.vortexine.player.reproductor.Mezcla.portadas(m, pistas) }
+    val cuantas = remember(m, pistas) { com.vortexine.player.reproductor.Mezcla.items(m, pistas).size }
+    if (cuantas == 0) return
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).clip(RoundedCornerShape(8.dp)).background(C.tarjeta)
+        .clickable { vm.tocarMezcla() }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(56.dp).clip(RoundedCornerShape(4.dp))) {
+            if (portadas.size >= 4) Column {
+                Row { Portada(portadas[0], 28.dp, 0.dp); Portada(portadas[1], 28.dp, 0.dp) }
+                Row { Portada(portadas[2], 28.dp, 0.dp); Portada(portadas[3], 28.dp, 0.dp) }
+            } else Portada(portadas.firstOrNull().orEmpty(), 56.dp, 4.dp)
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text("Tu mezcla del día", color = C.blanco, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("$cuantas canciones · lo que más escuchas y ${m.nuevas.size} parecidas que no tienes", color = C.tenue,
+                fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(22.dp)).background(C.morado), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.PlayArrow, "Tocar tu mezcla del día", tint = C.blanco)
+        }
+    }
+}
+
+/** 1.5: «Lo nuevo de tus artistas»: álbumes y singles de este año; se escuchan sin bajarlos o se bajan enteros. */
+@Composable
+private fun NovedadesArtistas(vm: VistaModelo) {
+    val lista by vm.novedades.collectAsStateWithLifecycle()
+    if (lista.isEmpty()) return
+    Text("Lo nuevo de tus artistas", color = C.blanco, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 8.dp))
+    androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(lista.size) { i ->
+            val l = lista[i]
+            Column(Modifier.width(140.dp).clickable { vm.tocarLanzamiento(l) }) {
+                Box {
+                    Portada(l.portada.replace("=w226-h226", "=w320-h320"), 140.dp, 6.dp)
+                    Box(Modifier.align(Alignment.BottomEnd).padding(6.dp).size(34.dp).clip(RoundedCornerShape(17.dp))
+                        .background(C.fondo.copy(alpha = 0.7f)).clickable { vm.bajarLanzamiento(l) }, contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Download, "Bajarlo a tu biblioteca", tint = C.acento, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Text(l.titulo, color = C.texto, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 6.dp))
+                Text(listOf(l.tipo, if (l.anio > 0) "${l.anio}" else "", l.artista).filter { it.isNotEmpty() }.joinToString(" · "),
+                    color = C.tenue, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 
@@ -198,6 +258,7 @@ fun PantallaBuscar(vm: VistaModelo) {
             }
             items(resultados, key = { it.id }) { FilaCancion(it, vm) { c -> paraPlaylist = c } }
             if (sinBusqueda) {
+                item { Column { NovedadesArtistas(vm) } }
                 item {
                     Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {

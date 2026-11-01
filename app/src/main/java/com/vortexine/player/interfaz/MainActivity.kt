@@ -26,11 +26,13 @@ class MainActivity : ComponentActivity() {
         setContent { TemaVortex { App(vm) } }
         com.vortexine.player.segundo.Trabajo.programar(this)
         com.vortexine.player.segundo.Trabajo.ahora(this)
+        com.vortexine.player.reproductor.Despertador.programar(this)   // 1.5: por si se perdió la alarma
     }
 
     override fun onResume() {
         super.onResume()
         visible = true
+        vm.revisarOtroAparato()   // 1.5: ¿sonaba algo en la PC?
     }
 
     override fun onPause() {

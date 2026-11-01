@@ -17,6 +17,8 @@ import androidx.media3.exoplayer.source.ShuffleOrder
 import com.vortexine.player.VortexApp
 import com.vortexine.player.motor.Cancion
 import com.vortexine.player.motor.Descargas
+import com.vortexine.player.motor.Letras
+import com.vortexine.player.motor.Pista
 import com.vortexine.player.motor.YtMusic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,7 +38,30 @@ object Radio {
     /** El id de YouTube si es una de la radio (null si es tuya). */
     fun idDe(uri: String): String? = uri.takeIf { it.startsWith("$ESQUEMA://") }?.removePrefix("$ESQUEMA://")
 
-    fun activa(ctx: Context) = ctx.getSharedPreferences("ajustes", Context.MODE_PRIVATE).getBoolean("radio", true)
+    fun activa(ctx: Context) = forzada || ctx.getSharedPreferences("ajustes", Context.MODE_PRIVATE).getBoolean("radio", true)
+
+    /** 1.5: «Iniciar radio» desde una canción: sigue aunque la radio sin fin esté apagada (hasta que toques otra cosa). */
+    @Volatile var forzada = false
+
+    /** 1.5: ¿la conexión se cobra por lo que gastas (datos del cel)? Entonces la radio sigue con tu música. */
+    fun medida(ctx: Context): Boolean {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        return cm.isActiveNetworkMetered
+    }
+
+    /** Una canción tuya para la cola del reproductor. */
+    fun itemPista(p: Pista): MediaItem = MediaItem.Builder().setMediaId(p.uri).setUri(Uri.parse(p.uri))
+        .setMediaMetadata(MediaMetadata.Builder().setTitle(p.titulo).setArtist(p.artista).setAlbumTitle(p.album)
+            .setArtworkUri(p.portada.takeIf { it.isNotEmpty() }?.let(Uri::parse))
+            .setExtras(Bundle().apply { putString("id", p.videoId) }).build()).build()   // 1.4: para la radio
+
+    /** 1.5: con datos móviles: 10 de tu biblioteca, primero de los mismos artistas, luego al azar. */
+    fun local(semillas: List<YtMusic.Semilla>, enCola: Set<String>, todas: List<Pista>, n: Int = 10): List<Pista> {
+        val artistas = semillas.map { Letras.limpiarArtista(Letras.artistaLimpio(it.artista)).lowercase() }.filter { it.isNotEmpty() }.toSet()
+        val libres = todas.filter { it.uri !in enCola }.shuffled()
+        val mismas = libres.filter { Letras.limpiarArtista(Letras.artistaLimpio(it.artista)).lowercase() in artistas }
+        return (mismas + (libres - mismas.toSet())).take(n)
+    }
 
     fun poner(ctx: Context, activa: Boolean) =
         ctx.getSharedPreferences("ajustes", Context.MODE_PRIVATE).edit().putBoolean("radio", activa).apply()
@@ -99,6 +124,14 @@ class RadioSinFin(private val ctx: Context, private val j: ExoPlayer) : Player.L
         val semillas = orden.subList((aqui - 2).coerceAtLeast(0), aqui + 1).reversed().map(::semilla)
         val enCola = (0 until j.mediaItemCount).map(::semilla)
         val app = ctx.applicationContext as VortexApp
+        if (Radio.medida(ctx)) {   // 1.5: con datos móviles no se gasta tu plan: sigue con tu música
+            app.alcance.launch {
+                val tuyas = runCatching { Radio.local(semillas, enCola.map { it.id }.toSet() + (0 until j.mediaItemCount).map { j.getMediaItemAt(it).mediaId },
+                    app.biblioteca.pistas()) }.getOrDefault(emptyList())
+                withContext(Dispatchers.Main) { fin(v, ultima, emptyList(), tuyas.map(Radio::itemPista)) }
+            }
+            return
+        }
         app.alcance.launch {
             val r = runCatching {
                 val tienes = app.biblioteca.pistas().map { YtMusic.Semilla(it.videoId, it.titulo, it.artista) } + enCola
@@ -108,15 +141,15 @@ class RadioSinFin(private val ctx: Context, private val j: ExoPlayer) : Player.L
         }
     }
 
-    private fun fin(v: Int, ultima: String, canciones: List<Cancion>) {
+    private fun fin(v: Int, ultima: String, canciones: List<Cancion>, tuyas: List<MediaItem> = emptyList()) {
         if (v != vuelta) return
         para = ""
-        if (canciones.isEmpty() || j.mediaItemCount == 0 || j.getMediaItemAt(j.mediaItemCount - 1).mediaId != ultima
+        if ((canciones.isEmpty() && tuyas.isEmpty()) || j.mediaItemCount == 0 || j.getMediaItemAt(j.mediaItemCount - 1).mediaId != ultima
             || !Radio.activa(ctx)) return
         val acabada = j.playbackState == Player.STATE_ENDED
         val orden = orden()
         val desde = j.mediaItemCount
-        j.addMediaItems(canciones.map(Radio::item))
+        j.addMediaItems(canciones.map(Radio::item) + tuyas)
         // con aleatorio, ExoPlayer las revolvería con lo que ya sonó: van al final, en orden
         if (j.shuffleModeEnabled) j.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(
             (orden + (desde until j.mediaItemCount)).toIntArray(), System.nanoTime()))

@@ -11,7 +11,7 @@ import java.io.IOException
  * Tu Google Drive, solo en la carpeta oculta de Vortex Player (`appDataFolder`): ahí vive
  * `vortex-player.json`. La app no ve ni toca nada más de tu Drive.
  */
-class Drive(private val token: String) {
+class Drive(private val token: String, private val archivo: String = ARCHIVO) {   // 1.5: también «sonando.json»
     class SinPermiso : IOException("Google ya no reconoce la sesión")
 
     companion object {
@@ -32,7 +32,7 @@ class Drive(private val token: String) {
 
     /** El id del archivo en Drive, o null si todavía no hay. */
     fun buscar(): String? {
-        val q = java.net.URLEncoder.encode("name = '$ARCHIVO'", "UTF-8")
+        val q = java.net.URLEncoder.encode("name = '$archivo'", "UTF-8")
         val r = JSONObject(pedir(Request.Builder().url("$API/files?spaces=appDataFolder&q=$q&fields=files(id)&orderBy=modifiedTime+desc")))
         return r.optJSONArray("files")?.optJSONObject(0)?.optString("id")?.ifEmpty { null }
     }
@@ -40,7 +40,7 @@ class Drive(private val token: String) {
     fun leer(id: String): String = pedir(Request.Builder().url("$API/files/$id?alt=media"))
 
     fun crear(texto: String): String {
-        val datos = JSONObject().put("name", ARCHIVO).put("parents", org.json.JSONArray().put("appDataFolder"))
+        val datos = JSONObject().put("name", archivo).put("parents", org.json.JSONArray().put("appDataFolder"))
         val cuerpo = MultipartBody.Builder().setType("multipart/related".toMediaType())
             .addPart(datos.toString().toRequestBody(JSON))
             .addPart(texto.toRequestBody(JSON))

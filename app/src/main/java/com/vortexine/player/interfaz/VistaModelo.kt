@@ -22,7 +22,10 @@ import com.vortexine.player.motor.Playlist
 import com.vortexine.player.motor.YtMusic
 import com.vortexine.player.motor.Biblioteca
 import com.vortexine.player.motor.Resumen
+import com.vortexine.player.reproductor.Despertador
 import com.vortexine.player.reproductor.Fundido
+import com.vortexine.player.reproductor.Mezcla
+import com.vortexine.player.reproductor.Seguir
 import com.vortexine.player.reproductor.Radio
 import com.vortexine.player.reproductor.Jugador
 import com.vortexine.player.reproductor.ServicioReproduccion
@@ -117,6 +120,15 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     val avisoResumen = MutableStateFlow(false)
     private val ajustes = app.getSharedPreferences("ajustes", android.content.Context.MODE_PRIVATE)
 
+    // 1.5: tu mezcla del día, seguir lo de la PC, lo nuevo de tus artistas, practicar y el despertador
+    val mezcla = MutableStateFlow(Mezcla.leer(app))
+    val seguir = MutableStateFlow<JSONObject?>(null)
+    val novedades = MutableStateFlow<List<YtMusic.Lanzamiento>>(emptyList())
+    val velocidad = MutableStateFlow(1f)
+    val tramo = MutableStateFlow(-1L to -1L)   // practicar: de A a B (ms; -1 = sin marcar)
+    val despertador = MutableStateFlow(Despertador.leer(app))
+    private val novedadesPrefs = app.getSharedPreferences("novedades", android.content.Context.MODE_PRIVATE)
+
     private var control: MediaController? = null
 
     // 1.1: la cuenta de Google, la sincronización y las actualizaciones
@@ -132,10 +144,14 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {   // lo que baja la sincronización aparece en la biblioteca
             Sincro.estado.map { it.vuelta }.distinctUntilChanged().drop(1).collect { recargar() }
         }
+        novedades.value = leerNovedades()
         viewModelScope.launch {
             var vueltas = 0
             while (isActive) {
                 control?.let { c -> if (c.isPlaying) sonando.update { it.copy(posicion = c.currentPosition) } }
+                // 1.5: practicar: al llegar a B vuelve a A
+                val (a, b) = tramo.value
+                control?.let { c -> if (b > a && a >= 0 && c.isPlaying && c.currentPosition >= b) c.seekTo(a) }
                 if (++vueltas % 20 == 0 && control?.isPlaying == true) guardarSesion()   // cada 5 s
                 delay(250)   // 4 veces por segundo: la letra cambia de línea a tiempo
             }
@@ -157,6 +173,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         restaurar()
         actualizarCola()
         if (!letrasPedidas) { letrasPedidas = true; bajarLetras() }
+        if (p.isNotEmpty()) { armarMezcla(); revisarNovedades() }
     }
 
     // --- reproducir ----------------------------------------------------------------------------------
@@ -188,7 +205,8 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         val item = c.currentMediaItem
         val uri = item?.mediaId.orEmpty()
         val p = pistas.value.firstOrNull { it.uri == uri }
-        val md = item?.mediaMetadata
+        // 1.5: los datos del reproductor de verdad (la sesión pone la línea de la letra en lugar del artista)
+        val md = Jugador.actual?.currentMediaItem?.takeIf { it.mediaId == uri }?.mediaMetadata ?: item?.mediaMetadata
         sonando.value = Sonando(
             uri = uri,
             titulo = p?.titulo ?: md?.title?.toString().orEmpty(),
@@ -199,7 +217,11 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             aleatorio = c.shuffleModeEnabled, repetir = c.repeatMode,
             hayAnterior = c.hasPreviousMediaItem() || c.currentPosition > 3000, haySiguiente = c.hasNextMediaItem(),
         )
-        if (uri != ultimaUri) { ultimaUri = uri; despues = (despues - 1).coerceAtLeast(0); cambioDeCancion(sonando.value) }
+        if (Despertador.sono) { Despertador.sono = false; origen.value = "Despertador" }
+        if (uri != ultimaUri) {
+            ultimaUri = uri; despues = (despues - 1).coerceAtLeast(0); cambioDeCancion(sonando.value)
+            if (tramo.value.first >= 0) tramo.value = -1L to -1L   // el tramo era de la otra canción
+        }
     }
 
     // --- 1.2: seguir donde te quedaste -----------------------------------------------------------------
@@ -297,19 +319,22 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun item(p: Pista) = MediaItem.Builder().setMediaId(p.uri).setUri(p.uri.toUri())
-        .setMediaMetadata(MediaMetadata.Builder().setTitle(p.titulo).setArtist(p.artista).setAlbumTitle(p.album)
-            .setArtworkUri(p.portada.takeIf { it.isNotEmpty() }?.let(Uri::parse))
-            .setExtras(android.os.Bundle().apply { putString("id", p.videoId) }).build()).build()   // 1.4: para la radio
+    private fun item(p: Pista) = Radio.itemPista(p)
 
     /** Toca `lista` empezando en `desde` (la cola es la lista entera, como en la PC). */
     fun tocar(lista: List<Pista>, desde: Int, aleatorio: Boolean = false, de: String = "Tu música") {
+        tocarItems(lista.map(::item), desde.coerceIn(0, (lista.size - 1).coerceAtLeast(0)), aleatorio, de)
+    }
+
+    private fun tocarItems(items: List<MediaItem>, desde: Int, aleatorio: Boolean, de: String, ms: Long = 0) {
         pararAvance()
         val c = control ?: return
+        if (items.isEmpty()) return
+        Radio.forzada = de.startsWith("Radio de ")
         origen.value = de
         restaurada = true
         despues = 0
-        c.setMediaItems(lista.map(::item), desde.coerceIn(0, (lista.size - 1).coerceAtLeast(0)), 0)
+        c.setMediaItems(items, desde, ms)
         c.shuffleModeEnabled = aleatorio
         c.prepare()
         c.play()
@@ -440,6 +465,186 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     fun resumenVisto() {
         ajustes.edit().putLong("resumen_visto", Biblioteca.semana(0).first).apply()
         avisoResumen.value = false
+    }
+
+    // --- 1.5: «Iniciar radio» y compartir --------------------------------------------------------------
+
+    /** Suena esa canción y luego, sin fin, parecidas a ella (aunque la radio sin fin esté apagada). */
+    fun iniciarRadio(p: Pista) {
+        tocar(listOf(p), 0, de = "Radio de ${p.titulo}")
+        aviso.value = "Radio de «${p.titulo}»: siguen parecidas"
+    }
+
+    /** El enlace de YouTube Music, por WhatsApp o lo que elijas (las tuyas sin id se buscan primero). */
+    fun compartir(titulo: String, artista: String, videoId: String) = viewModelScope.launch {
+        val id = videoId.ifEmpty {
+            runCatching { withContext(Dispatchers.IO) { YtMusic.buscar("$artista $titulo", 1).firstOrNull()?.id } }.getOrNull().orEmpty()
+        }
+        if (id.isEmpty()) { aviso.value = "No encontré esta canción en YouTube Music."; return@launch }
+        val texto = (if (artista.isNotEmpty()) "$titulo · $artista" else titulo) + " https://music.youtube.com/watch?v=$id"
+        val enviar = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_TEXT, texto)
+        getApplication<Application>().startActivity(android.content.Intent.createChooser(enviar, "Compartir canción")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    fun compartir(p: Pista) = compartir(p.titulo, p.artista, p.videoId)
+
+    // --- 1.5: tu mezcla del día ----------------------------------------------------------------------
+
+    private var armandoMezcla = false
+
+    fun armarMezcla(forzar: Boolean = false) {
+        if (armandoMezcla || (!forzar && mezcla.value.fecha == Mezcla.hoy())) return
+        val todas = pistas.value
+        if (todas.isEmpty()) return
+        armandoMezcla = true
+        vapp.alcance.launch {
+            val d = runCatching { Mezcla.armar(bib, todas) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                armandoMezcla = false
+                if (d != null && d.nuevas.isNotEmpty()) { Mezcla.guardar(getApplication(), d); mezcla.value = d }   // sin internet: la próxima vez
+            }
+        }
+    }
+
+    fun tocarMezcla() = tocarItems(Mezcla.items(mezcla.value, pistas.value), 0, false, "Tu mezcla del día")
+
+    // --- 1.5: seguir en el otro aparato ----------------------------------------------------------------
+
+    private var revisadoOtro = 0L
+
+    /** Al abrir la app o volver a ella: ¿sonaba algo en la PC? */
+    fun revisarOtroAparato() {
+        val ahora = System.currentTimeMillis()
+        if (!Cuenta.datos.value.conectada || ahora - revisadoOtro < 45_000) return
+        revisadoOtro = ahora
+        viewModelScope.launch {
+            val d = runCatching { withContext(Dispatchers.IO) { Seguir.leer(getApplication()) } }.getOrNull()
+            if (!Seguir.ofrecer(getApplication(), d)) return@launch
+            val enEsta = Jugador.actual?.currentMediaItem?.let { it.mediaMetadata.extras?.getString("id") ?: Radio.idDe(it.mediaId) }
+            if (enEsta == d!!.optString("id") && kotlin.math.abs((control?.currentPosition ?: 0) / 1000.0 - d.optDouble("posicion")) < 30) return@launch
+            seguir.value = d
+        }
+    }
+
+    fun seguirAqui() {
+        val d = seguir.value ?: return
+        seguir.value = null
+        Seguir.marcarVisto(getApplication(), d.optLong("cuando"))
+        val id = d.optString("id")
+        val tuya = pistas.value.firstOrNull { it.videoId == id }
+        val it = tuya?.let(::item) ?: Radio.item(Cancion(id, d.optString("titulo"), d.optString("artista"), d.optString("album"),
+            d.optDouble("duracion", 0.0).toInt(), d.optString("portada")))
+        tocarItems(listOf(it), 0, false, "Desde " + d.optString("nombre", "tu PC"), (d.optDouble("posicion", 0.0) * 1000).toLong())
+    }
+
+    fun descartarSeguir() {
+        seguir.value?.let { Seguir.marcarVisto(getApplication(), it.optLong("cuando")) }
+        seguir.value = null
+    }
+
+    // --- 1.5: lo nuevo de tus artistas -----------------------------------------------------------------
+
+    private fun leerNovedades(): List<YtMusic.Lanzamiento> = runCatching {
+        val a = JSONArray(novedadesPrefs.getString("lista", "[]"))
+        (0 until a.length()).map { a.getJSONObject(it).let { o ->
+            YtMusic.Lanzamiento(o.getString("id"), o.optString("titulo"), o.optString("artista"), o.optString("tipo"), o.optInt("anio"), o.optString("portada"))
+        } }
+    }.getOrDefault(emptyList())
+
+    /** Una vez al día: los álbumes y singles de este año de tus 5 artistas más escuchados que no tienes. */
+    fun revisarNovedades(forzar: Boolean = false) {
+        val hoy = Mezcla.hoy()
+        if (!forzar && novedadesPrefs.getString("fecha", "") == hoy) return
+        novedadesPrefs.edit().putString("fecha", hoy).apply()
+        val todas = pistas.value
+        vapp.alcance.launch {
+            val artistas = bib.artistasMasEscuchados(System.currentTimeMillis() - 60 * 86_400_000L, 5, todas)
+            val claves = todas.map { YtMusic.clave(it.album.ifEmpty { it.titulo }, it.artista) }.toSet() + todas.map { YtMusic.clave(it.titulo, it.artista) }
+            val ids = runCatching { JSONObject(novedadesPrefs.getString("ids", "{}")!!) }.getOrDefault(JSONObject())
+            val cal = java.util.Calendar.getInstance()
+            val desde = cal.get(java.util.Calendar.YEAR) - if (cal.get(java.util.Calendar.MONTH) <= 1) 1 else 0
+            val lista = mutableListOf<YtMusic.Lanzamiento>()
+            try {
+                for (a in artistas) {
+                    val canal = ids.optString(a).ifEmpty { YtMusic.artistaId(a) }.ifEmpty { continue }
+                    ids.put(a, canal)
+                    lista += YtMusic.lanzamientos(canal, a).take(8).filter { it.anio >= desde && YtMusic.clave(it.titulo, a) !in claves }
+                }
+            } catch (e: Exception) {
+                novedadesPrefs.edit().remove("fecha").apply()   // sin internet: la próxima vez que abras la app
+                return@launch
+            }
+            val final = lista.sortedByDescending { it.anio }.take(12)
+            val vistos = novedadesPrefs.getStringSet("vistos", emptySet()).orEmpty()
+            val nuevas = final.filter { it.id !in vistos }
+            novedadesPrefs.edit().putString("ids", ids.toString()).putStringSet("vistos", vistos + final.map { it.id })
+                .putString("lista", JSONArray(final.map {
+                    JSONObject().put("id", it.id).put("titulo", it.titulo).put("artista", it.artista).put("tipo", it.tipo)
+                        .put("anio", it.anio).put("portada", it.portada)
+                }).toString()).apply()
+            withContext(Dispatchers.Main) {
+                novedades.value = final
+                if (nuevas.isNotEmpty()) avisarNovedades(nuevas)
+            }
+        }
+    }
+
+    private fun avisarNovedades(nuevas: List<YtMusic.Lanzamiento>) {
+        val x = nuevas.first()
+        val texto = if (nuevas.size == 1) "Nuevo de ${x.artista}: «${x.titulo}»"
+            else "${nuevas.size} lanzamientos nuevos de tus artistas, como «${x.titulo}» de ${x.artista}"
+        aviso.value = texto
+        val ctx = getApplication<Application>()
+        val nm = androidx.core.app.NotificationManagerCompat.from(ctx)
+        if (android.os.Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(android.app.NotificationChannel("novedades",
+            "Lo nuevo de tus artistas", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+        val abrir = android.app.PendingIntent.getActivity(ctx, 9, android.content.Intent(ctx, MainActivity::class.java),
+            android.app.PendingIntent.FLAG_IMMUTABLE)
+        runCatching {
+            nm.notify(9, androidx.core.app.NotificationCompat.Builder(ctx, "novedades").setSmallIcon(com.vortexine.player.R.drawable.ic_estado)
+                .setContentTitle("Lo nuevo de tus artistas").setContentText(texto).setContentIntent(abrir).setAutoCancel(true).build())
+        }
+    }
+
+    /** Suena entero sin bajarlo (como la radio). */
+    fun tocarLanzamiento(l: YtMusic.Lanzamiento) = viewModelScope.launch {
+        val canciones = runCatching { withContext(Dispatchers.IO) { YtMusic.cancionesDe(l) } }.getOrElse { aviso.value = mensaje(it); return@launch }
+        tocarItems(canciones.map(Radio::item), 0, false, l.titulo)
+    }
+
+    fun bajarLanzamiento(l: YtMusic.Lanzamiento) = viewModelScope.launch {
+        val canciones = runCatching { withContext(Dispatchers.IO) { YtMusic.cancionesDe(l) } }.getOrElse { aviso.value = mensaje(it); return@launch }
+        canciones.forEach { bajar(it) }
+        aviso.value = "Bajando «${l.titulo}» a tu biblioteca"
+    }
+
+    // --- 1.5: practicar una canción ----------------------------------------------------------------------
+
+    /** Más lenta (o rápida) sin que cambie el tono. */
+    fun ponerVelocidad(v: Float) {
+        control?.playbackParameters = androidx.media3.common.PlaybackParameters(v, 1f)
+        velocidad.value = v
+    }
+
+    /** La 1.ª vez marca A, la 2.ª B (y se repite de A a B), la 3.ª lo quita. */
+    fun marcarTramo() {
+        val pos = control?.currentPosition ?: return
+        val (a, b) = tramo.value
+        tramo.value = when {
+            a < 0 -> pos to -1L
+            b < 0 && pos > a + 500 -> { control?.seekTo(a); a to pos }
+            else -> -1L to -1L
+        }
+    }
+
+    // --- 1.5: el despertador -----------------------------------------------------------------------------
+
+    fun ponerDespertador(a: Despertador.Ajuste) {
+        Despertador.poner(getApplication(), a)
+        despertador.value = a
+        if (a.activo) aviso.value = "El despertador suena a las %d:%02d".format(a.hora, a.minuto)
     }
 
     // --- 1.3: las letras de toda tu música, para verlas sin internet -----------------------------------

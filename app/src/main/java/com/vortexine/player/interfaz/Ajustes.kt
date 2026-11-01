@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -195,6 +196,7 @@ private fun TuResumen(vm: VistaModelo) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PantallaAjustes(vm: VistaModelo) {
     val ctx = LocalContext.current
@@ -263,6 +265,35 @@ fun PantallaAjustes(vm: VistaModelo) {
             if (letras.trabajando && letras.total > 0) LinearProgressIndicator({ letras.con / letras.total.toFloat() },
                 Modifier.fillMaxWidth().padding(top = 6.dp), color = C.acento, trackColor = C.borde)
             else TextButton(vm::bajarLetras) { Text("Buscar las que faltan") }
+        }
+
+        // 1.5: el despertador con tu música (una alarma de verdad de Android)
+        val desp by vm.despertador.collectAsStateWithLifecycle()
+        val listas by vm.playlists.collectAsStateWithLifecycle()
+        var elegirHora by remember { mutableStateOf(false) }
+        Seccion("Despertador", Icons.Rounded.Alarm) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).clickable { elegirHora = true }) {
+                    Text("%d:%02d".format(desp.hora, desp.minuto), color = if (desp.activo) C.blanco else C.tenue, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                    Text("Suena tu música y el volumen sube poco a poco durante un minuto. Toca la hora para cambiarla.",
+                        color = C.tenue, fontSize = 12.sp)
+                }
+                Switch(desp.activo, { vm.ponerDespertador(desp.copy(activo = it)) }, colors = SwitchDefaults.colors(checkedTrackColor = C.morado))
+            }
+            Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                (listOf(-1L to "Tu mezcla del día") + listas.map { it.id to it.nombre }).forEach { (id, nombre) ->
+                    FilterChip(desp.playlist == id, { vm.ponerDespertador(desp.copy(playlist = id)) }, { Text(nombre, maxLines = 1) }, border = null,
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = C.morado, selectedLabelColor = C.blanco,
+                            containerColor = C.campo, labelColor = C.suave))
+                }
+            }
+        }
+        if (elegirHora) {
+            val estado = rememberTimePickerState(desp.hora, desp.minuto, is24Hour = false)
+            AlertDialog({ elegirHora = false }, containerColor = C.tarjeta,
+                confirmButton = { TextButton({ vm.ponerDespertador(desp.copy(activo = true, hora = estado.hour, minuto = estado.minute)); elegirHora = false }) { Text("Listo") } },
+                dismissButton = { TextButton({ elegirHora = false }) { Text("Cancelar") } },
+                text = { TimePicker(estado) })
         }
 
         Seccion("Actualizaciones", Icons.Rounded.SystemUpdate) {

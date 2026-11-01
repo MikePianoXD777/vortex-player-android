@@ -61,6 +61,7 @@ fun App(vm: VistaModelo) {
             snackbarHost = { SnackbarHost(avisos) },
             bottomBar = {
                 Column(Modifier.background(Brush.verticalGradient(listOf(Color.Transparent, C.barra), endY = 120f))) {
+                    SeguirAqui(vm)   // 1.5: lo que dejaste sonando en la PC
                     AnimatedVisibility(sonando.uri.isNotEmpty(), enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
                         MiniReproductor(sonando, vm) { grande = true }
                     }
@@ -104,6 +105,65 @@ fun App(vm: VistaModelo) {
     }
 }
 
+/** 1.5: «¿Seguir aquí?»: lo que sonaba en la PC, en el mismo segundo. */
+@Composable
+private fun SeguirAqui(vm: VistaModelo) {
+    val d by vm.seguir.collectAsStateWithLifecycle()
+    AnimatedVisibility(d != null, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+        val o = d ?: return@AnimatedVisibility
+        val min = ((System.currentTimeMillis() - o.optLong("cuando")) / 60_000).toInt()
+        val hace = if (min < 1) "hace un momento" else if (min < 60) "hace $min min" else "hace ${min / 60} h"
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).clip(RoundedCornerShape(8.dp)).background(C.tarjeta)
+            .padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Computer, null, tint = C.lila, modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                Text("En ${o.optString("nombre", "tu PC")} sonaba · $hace", color = C.tenue, fontSize = 12.sp)
+                Text(o.optString("titulo") + o.optString("artista").let { if (it.isNotEmpty()) " · $it" else "" },
+                    color = C.blanco, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            TextButton(vm::seguirAqui) { Text("Seguir aquí", color = C.acento, fontWeight = FontWeight.Bold) }
+            IconButton(vm::descartarSeguir) { Icon(Icons.Rounded.Close, "Cerrar", tint = C.tenue) }
+        }
+    }
+}
+
+/** 1.5: practicar una canción: más lenta sin cambiar el tono y repetir un pedazo de A a B. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Practicar(vm: VistaModelo, s: Sonando, cerrar: () -> Unit) {
+    val v by vm.velocidad.collectAsStateWithLifecycle()
+    val t by vm.tramo.collectAsStateWithLifecycle()
+    ModalBottomSheet(cerrar, containerColor = C.tarjeta) {
+        Column(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 28.dp)) {
+            Text("Practicar", color = C.blanco, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Para sacar la canción en el piano: más lenta sin que cambie el tono, y repite el pedazo que estás aprendiendo.",
+                color = C.tenue, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
+            Text("Velocidad", color = C.texto, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0.5f to "50 %", 0.75f to "75 %", 0.9f to "90 %", 1f to "Normal").forEach { (x, nombre) ->
+                    FilterChip(v == x, { vm.ponerVelocidad(x) }, { Text(nombre) }, border = null,
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = C.morado, selectedLabelColor = C.blanco,
+                            containerColor = C.campo, labelColor = C.suave))
+                }
+            }
+            Text("Repetir un pedazo", color = C.texto, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
+            Text(when {
+                t.first < 0 -> "Toca «Marcar el inicio» donde empieza el pedazo."
+                t.second < 0 -> "Inicio en ${tiempo(t.first)}. Ahora toca «Marcar el final» donde termina."
+                else -> "Se repite de ${tiempo(t.first)} a ${tiempo(t.second)}."
+            }, color = C.tenue, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            Button(vm::marcarTramo, Modifier.padding(top = 10.dp), colors = ButtonDefaults.buttonColors(
+                containerColor = if (t.second >= 0) C.campo else C.morado, contentColor = C.blanco)) {
+                Text(when {
+                    t.first < 0 -> "Marcar el inicio (${tiempo(s.posicion)})"
+                    t.second < 0 -> "Marcar el final (${tiempo(s.posicion)})"
+                    else -> "Dejar de repetir"
+                })
+            }
+        }
+    }
+}
+
 /** La barra de la canción que suena: una tarjeta del color de la portada, como en Spotify. */
 @Composable
 fun MiniReproductor(s: Sonando, vm: VistaModelo, abrir: () -> Unit) {
@@ -139,6 +199,9 @@ fun Reproductor(s: Sonando, vm: VistaModelo, cerrar: () -> Unit) {
     var letraGrande by rememberSaveable { mutableStateOf(false) }
     var verCola by remember { mutableStateOf(false) }
     var verDormir by remember { mutableStateOf(false) }
+    var verPracticar by remember { mutableStateOf(false) }
+    val velocidad by vm.velocidad.collectAsStateWithLifecycle()
+    val tramo by vm.tramo.collectAsStateWithLifecycle()
     val dormir by vm.temporizador.collectAsStateWithLifecycle()
     val origen by vm.origen.collectAsStateWithLifecycle()
     val letra by vm.letra.collectAsStateWithLifecycle()
@@ -213,6 +276,16 @@ fun Reproductor(s: Sonando, vm: VistaModelo, cerrar: () -> Unit) {
                             if (dormir.activo) Text("  " + textoDormir(dormir), color = C.acento, fontSize = 13.sp)
                         }
                         Spacer(Modifier.weight(1f))
+                        // 1.5: practicar y compartir
+                        val practicando = velocidad != 1f || tramo.first >= 0
+                        TextButton({ verPracticar = true }) {
+                            Icon(Icons.Rounded.Speed, "Practicar", tint = if (practicando) C.acento else C.blanco.copy(alpha = 0.8f))
+                            if (velocidad != 1f) Text("  ${(velocidad * 100).toInt()} %", color = C.acento, fontSize = 13.sp)
+                        }
+                        IconButton({ vm.compartir(s.titulo, s.artista, com.vortexine.player.reproductor.Radio.idDe(s.uri)
+                            ?: vm.pistas.value.firstOrNull { it.uri == s.uri }?.videoId.orEmpty()) }, enabled = s.uri.isNotEmpty()) {
+                            Icon(Icons.Rounded.Share, "Compartir", tint = C.blanco.copy(alpha = 0.8f))
+                        }
                         IconButton({ verCola = true }) { Icon(Icons.Rounded.QueueMusic, "A continuación", tint = C.blanco.copy(alpha = 0.8f)) }
                     }
                     Spacer(Modifier.weight(0.3f))
@@ -225,6 +298,7 @@ fun Reproductor(s: Sonando, vm: VistaModelo, cerrar: () -> Unit) {
         }
         if (verCola) Cola(vm, s) { verCola = false }
         if (verDormir) Dormir(vm, dormir) { verDormir = false }
+        if (verPracticar) Practicar(vm, s) { verPracticar = false }
         AnimatedVisibility(letraGrande && letra != null, enter = fadeIn(tween(250)) + scaleIn(tween(300), 0.94f), exit = fadeOut(tween(200)) + scaleOut(tween(200), 0.96f)) {
             letra?.let { Box(conDesenfoque()) { LetraCompleta(it, s, color, vm) { letraGrande = false } } }
         }

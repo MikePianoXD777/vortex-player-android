@@ -89,4 +89,32 @@ class MotorTest {
             YtMusic.pedir = com.vortexine.player.motor.Red::pedirJson
         }
     }
+
+    // 1.5: lo nuevo de tus artistas, la radio con datos móviles y el despertador
+    @Test fun lanzamientosYDatosYDespertador() {
+        fun item(id: String, titulo: String, sub: String) = """{"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"$titulo"}]},
+            "subtitle":{"runs":[{"text":"$sub"}]},"navigationEndpoint":{"browseEndpoint":{"browseId":"$id"}},
+            "thumbnailRenderer":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://x/a=w60-h60"}]}}}}}"""
+        val pagina = """{"contents":[{"musicCarouselShelfRenderer":{"contents":[${item("MPREb_viejo", "Kyougen", "Álbum • 2022")},
+            ${item("MPREb_nuevo", "Hello", "Single • 2026")},${item("MPREb_ep", "Ep", "EP • 2025")},${item("VLPLx", "Lista", "Playlist")}]}}]}"""
+        val l = YtMusic.leerLanzamientos(pagina, "Ado")
+        assertEquals(listOf("MPREb_nuevo" to "Single", "MPREb_ep" to "EP", "MPREb_viejo" to "Álbum"), l.map { it.id to it.tipo })
+        assertEquals(2026, l[0].anio)
+        val album = """{"contents":[{"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"aaaaaaaaaaa"},
+            "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Hello"}]}}}]}}]}"""
+        assertEquals(listOf(Cancion("aaaaaaaaaaa", "Hello", "Ado", "Hello", 0, l[0].portada)), YtMusic.leerCancionesDe(album, l[0]))
+
+        fun pista(uri: String, artista: String) = com.vortexine.player.motor.Pista(uri, uri, artista, "", 1000, 0)
+        val todas = listOf(pista("0", "Ado"), pista("1", "Otro"), pista("2", "Ado - Topic"), pista("3", "Más"), pista("4", "Ado"))
+        val r = Radio.local(listOf(YtMusic.Semilla("", "", "Ado")), setOf("0"), todas, 3)
+        assertEquals(setOf("2", "4"), r.take(2).map { it.uri }.toSet())
+        assertEquals(3, r.size)
+
+        val c = java.util.Calendar.getInstance().apply { set(2026, 10, 1, 8, 0, 0); set(java.util.Calendar.MILLISECOND, 0) }
+        val ahora = c.timeInMillis
+        val a = com.vortexine.player.reproductor.Despertador.Ajuste(true, 7, 30)
+        assertEquals(ahora + 23 * 3_600_000L + 30 * 60_000L, com.vortexine.player.reproductor.Despertador.proxima(a, ahora))
+        assertEquals(ahora + 30 * 60_000L, com.vortexine.player.reproductor.Despertador.proxima(a.copy(hora = 8, minuto = 30), ahora))
+        assertNull(com.vortexine.player.reproductor.Despertador.proxima(a.copy(activo = false), ahora))
+    }
 }

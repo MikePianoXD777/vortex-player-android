@@ -219,6 +219,25 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
         return Resumen(desde, hasta, Math.round(total / 60_000.0).toInt(), cuantas, canciones.size, dias.size, top(canciones), top(artistas))
     }
 
+    /** 1.5: las uris que más sonaron desde `desde` (ms), para «Tu mezcla del día». */
+    fun masEscuchadas(desde: Long, n: Int = 15): List<String> =
+        readableDatabase.rawQuery("SELECT uri FROM escuchas WHERE cuando >= ? GROUP BY uri ORDER BY COUNT(*) DESC, MAX(cuando) DESC LIMIT ?",
+            arrayOf(desde.toString(), n.toString())).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+
+    /** 1.5: tus artistas de los últimos días (para «Lo nuevo de tus artistas»); sin escuchas, los que más tienes. */
+    fun artistasMasEscuchados(desde: Long, n: Int = 5, tuyas: List<Pista> = emptyList()): List<String> {
+        val nombres = readableDatabase.rawQuery("SELECT artista FROM escuchas WHERE cuando >= ?", arrayOf(desde.toString()))
+            .use { c -> buildList { while (c.moveToNext()) add(c.getString(0) ?: "") } }.ifEmpty { tuyas.map { it.artista } }
+        val cuenta = linkedMapOf<String, Pair<String, Int>>()
+        for (a in nombres) {
+            val limpio = Letras.limpiarArtista(Letras.artistaLimpio(a)).trim()
+            if (limpio.isEmpty() || limpio.equals("<unknown>", true)) continue
+            val k = limpio.lowercase()
+            cuenta[k] = (cuenta[k]?.first ?: limpio) to ((cuenta[k]?.second ?: 0) + 1)
+        }
+        return cuenta.values.sortedByDescending { it.second }.take(n).map { it.first }
+    }
+
     // --- playlists -----------------------------------------------------------------------------------
 
     /** «Tus me gusta» siempre primero (1.3), luego por nombre. */

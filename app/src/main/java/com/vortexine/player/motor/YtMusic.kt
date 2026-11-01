@@ -222,6 +222,57 @@ object YtMusic {
         return salida
     }
 
+    // --- 1.5: lo nuevo de tus artistas -----------------------------------------------------------------
+
+    /** Un álbum, single o EP («MPREb…») de un artista. */
+    data class Lanzamiento(val id: String, val titulo: String, val artista: String, val tipo: String, val anio: Int, val portada: String)
+
+    /** El id del canal del artista en YouTube Music («UC…»), o "" si no lo encuentra. */
+    fun artistaId(nombre: String): String {
+        val cuerpo = JSONObject().put("context", contexto()).put("query", nombre).put("params", "EgWKAQIgAWoKEAkQBRAKEAMQBA%3D%3D")
+        val r = JSONObject(pedir("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", cuerpo.toString()))
+        return todos(r, "musicResponsiveListItemRenderer").map {
+            it.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
+        }.firstOrNull { it.startsWith("UC") }.orEmpty()
+    }
+
+    /** Lo que muestra la página del artista: sus álbumes, singles y EP, los más nuevos primero. */
+    fun leerLanzamientos(respuesta: String, artista: String): List<Lanzamiento> {
+        val salida = mutableListOf<Lanzamiento>()
+        for (estante in todos(JSONObject(respuesta), "musicCarouselShelfRenderer")) {
+            val cont = estante.optJSONArray("contents") ?: continue
+            for (k in 0 until cont.length()) {
+                val it = cont.getJSONObject(k).optJSONObject("musicTwoRowItemRenderer") ?: continue
+                val id = it.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.optString("browseId").orEmpty()
+                if (!id.startsWith("MPREb")) continue
+                val sub = runs(it.optJSONObject("subtitle"))
+                val tipo = when { "EP" in sub -> "EP"; Regex("Single|Sencillo").containsMatchIn(sub) -> "Single"; else -> "Álbum" }
+                val fotos = it.optJSONObject("thumbnailRenderer")?.optJSONObject("musicThumbnailRenderer")
+                    ?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+                salida += Lanzamiento(id, runs(it.optJSONObject("title")), artista, tipo,
+                    Regex("\\b(19|20)\\d\\d\\b").find(sub)?.value?.toInt() ?: 0, portadaGrande(fotos))
+            }
+        }
+        return salida.sortedByDescending { it.anio }
+    }
+
+    fun lanzamientos(canal: String, artista: String): List<Lanzamiento> = leerLanzamientos(
+        pedir("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false",
+            JSONObject().put("context", contexto()).put("browseId", canal).toString()), artista)
+
+    /** Las canciones de un álbum o single: [Cancion] con la portada y el artista del lanzamiento. */
+    fun leerCancionesDe(respuesta: String, l: Lanzamiento): List<Cancion> =
+        todos(JSONObject(respuesta), "musicResponsiveListItemRenderer").mapNotNull {
+            val vid = it.optJSONObject("playlistItemData")?.optString("videoId").orEmpty()
+            val col = it.optJSONArray("flexColumns")?.optJSONObject(0)?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+            val titulo = runs(col?.optJSONObject("text"))
+            if (vid.isEmpty() || titulo.isEmpty()) null else Cancion(vid, titulo, l.artista, l.titulo, 0, l.portada)
+        }
+
+    fun cancionesDe(l: Lanzamiento): List<Cancion> = leerCancionesDe(
+        pedir("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false",
+            JSONObject().put("context", contexto()).put("browseId", l.id).toString()), l)
+
     /** La letra que muestra YouTube Music (pestaña «Letra», de Musixmatch); sin tiempos. null si no tiene. */
     fun letra(videoId: String): String? {
         val n = JSONObject(pedir("https://music.youtube.com/youtubei/v1/next?prettyPrint=false",
