@@ -82,7 +82,7 @@ fun App(vm: VistaModelo) {
                 AnimatedContent(pestana, transitionSpec = { entrePestanas() }, label = "pestañas") { p ->
                     Box(conDesenfoque().fillMaxSize()) {
                         when (p) {
-                            0 -> PantallaBiblioteca(vm)
+                            0 -> PantallaBiblioteca(vm) { pestana = 4 }
                             1 -> PantallaBuscar(vm)
                             2 -> AnimatedContent(abierta, transitionSpec = { deLado(targetState != null) }, label = "playlist") { a ->
                                 Box(conDesenfoque().fillMaxSize()) {
@@ -294,6 +294,17 @@ private fun LineasLetra(letra: Letras.Letra, s: Sonando, vm: VistaModelo, modifi
 /** El corazón de Spotify: al tocarlo late y se pinta del morado de Obsidian. */
 @Composable
 fun Corazon(vm: VistaModelo, uri: String, tam: androidx.compose.ui.unit.Dp) {
+    // 1.4: la de la radio todavía no es tuya: en vez del corazón, el botón para bajarla
+    com.vortexine.player.reproductor.Radio.idDe(uri)?.let { id ->
+        val bajadas by vm.bajadas.collectAsStateWithLifecycle()
+        val cola by vm.cola.collectAsStateWithLifecycle()
+        val lista = id in bajadas || cola.any { it.cancion.id == id && it.error.isEmpty() }
+        IconButton({ vm.bajarDeLaRadio(vm.sonando.value) }, enabled = !lista) {
+            Icon(if (lista) Icons.Rounded.DownloadDone else Icons.Rounded.Download, if (lista) "Bajando a tu biblioteca" else "Bajar a tu biblioteca",
+                tint = if (lista) C.acento else C.blanco, modifier = Modifier.size(tam))
+        }
+        return
+    }
     val meGusta by vm.meGusta.collectAsStateWithLifecycle()
     val gusta = uri in meGusta
     var latido by remember { mutableIntStateOf(0) }
@@ -343,6 +354,7 @@ private fun Dormir(vm: VistaModelo, e: com.vortexine.player.reproductor.Temporiz
 private fun Cola(vm: VistaModelo, s: Sonando, cerrar: () -> Unit) {
     val siguientes by vm.siguientes.collectAsStateWithLifecycle()
     val origen by vm.origen.collectAsStateWithLifecycle()
+    val radio by vm.radio.collectAsStateWithLifecycle()
     ModalBottomSheet(cerrar, containerColor = C.tarjeta, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(0.9f), contentPadding = PaddingValues(bottom = 24.dp)) {
             item {
@@ -357,10 +369,19 @@ private fun Cola(vm: VistaModelo, s: Sonando, cerrar: () -> Unit) {
                 }
                 if (siguientes.isNotEmpty()) Text("Lo que sigue" + if (origen.isNotEmpty()) " · de $origen" else "", color = C.texto, fontWeight = FontWeight.Bold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp))
-                else Text("No viene nada después. En el menú de una canción: «Tocar después» o «Agregar a la cola».", color = C.tenue, fontSize = 13.sp,
+                else Text(if (radio) "Al acabarse, la radio sigue con canciones parecidas."
+                    else "No viene nada después. En el menú de una canción: «Tocar después» o «Agregar a la cola».", color = C.tenue, fontSize = 13.sp,
                     modifier = Modifier.padding(20.dp))
             }
-            itemsIndexed(siguientes, key = { i, e -> "${e.indice}-${e.pista.uri}-$i" }) { _, e ->
+            itemsIndexed(siguientes, key = { i, e -> "${e.indice}-${e.pista.uri}-$i" }) { i, e ->
+                // 1.4: donde empieza la radio sin fin
+                if (e.radio && (i == 0 || !siguientes[i - 1].radio)) Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Radio, null, tint = C.acento, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Radio", color = C.texto, fontWeight = FontWeight.Bold)
+                    Text(" · parecidas a lo que escuchabas", color = C.tenue, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 Row(Modifier.animateItem().fillMaxWidth().clickable { vm.saltarA(e.indice) }.padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Portada(e.pista.portada, 48.dp)

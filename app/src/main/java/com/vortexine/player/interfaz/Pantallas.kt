@@ -68,7 +68,7 @@ fun ColumnScope.OpcionesCancion(vm: VistaModelo, p: Pista, gusta: Boolean, cerra
 }
 
 @Composable
-fun PantallaBiblioteca(vm: VistaModelo) {
+fun PantallaBiblioteca(vm: VistaModelo, verResumen: () -> Unit = {}) {
     val pistas by vm.pistas.collectAsStateWithLifecycle()
     val cargando by vm.cargando.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
@@ -86,6 +86,7 @@ fun PantallaBiblioteca(vm: VistaModelo) {
     Column {
         Titulo("Tu música", if (cargando) "Leyendo tu música…" else cuantas(pistas.size) + if (hires > 0) " · $hires Hi-Res" else "")
         AvisoNube(vm)
+        AvisoResumen(vm, verResumen)
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(filtro, { filtro = it }, Modifier.weight(1f), singleLine = true,
                 placeholder = { Text("Buscar en tu música") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },

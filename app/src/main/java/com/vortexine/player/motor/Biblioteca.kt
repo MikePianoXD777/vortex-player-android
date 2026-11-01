@@ -30,18 +30,27 @@ data class Pista(
 
 data class Playlist(val id: Long, val nombre: String, val cuantas: Int, val meGusta: Boolean = false)
 
+/** 1.4: «Tu resumen» de una semana. */
+data class Resumen(
+    val desde: Long = 0, val hasta: Long = 0, val minutos: Int = 0, val escuchas: Int = 0, val distintas: Int = 0,
+    val dias: Int = 0, val canciones: List<Top> = emptyList(), val artistas: List<Top> = emptyList(),
+) {
+    /** Una canción (o un artista, con `titulo` vacío) de lo más escuchado. */
+    data class Top(val titulo: String, val artista: String, val portada: String, val veces: Int, val minutos: Int)
+}
+
 /**
  * La biblioteca: toda la música del teléfono (la que ve Android) más lo que sabe Vortex Player de las que
  * bajó (título, artista y portada de YouTube Music) y tus playlists. Se guarda en SQLite.
  */
-class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-player.db", null, 2) {
+class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-player.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE bajadas (video_id TEXT PRIMARY KEY, uri TEXT, titulo TEXT, artistas TEXT, album TEXT, portada TEXT)")
         db.execSQL("CREATE TABLE calidad (uri TEXT PRIMARY KEY, bytes INTEGER, codec TEXT, bits INTEGER, hz INTEGER, kbps INTEGER)")
         db.execSQL("CREATE TABLE playlists (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT)")
         db.execSQL("CREATE TABLE en_playlist (playlist INTEGER, uri TEXT, pos INTEGER, PRIMARY KEY (playlist, uri))")
-        onUpgrade(db, 1, 2)
+        onUpgrade(db, 1, 3)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, viejo: Int, nuevo: Int) {
@@ -51,6 +60,11 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
             db.execSQL("ALTER TABLE playlists ADD COLUMN url TEXT DEFAULT ''")
             db.execSQL("ALTER TABLE playlists ADD COLUMN modificada INTEGER DEFAULT 0")
             db.execSQL("CREATE TABLE borradas (tipo TEXT, clave TEXT, cuando INTEGER, PRIMARY KEY (tipo, clave))")
+        }
+        if (viejo < 3) {
+            // 1.4: cada canción que de verdad escuchaste, para «Tu resumen»
+            db.execSQL("CREATE TABLE escuchas (cuando INTEGER, uri TEXT, titulo TEXT, artista TEXT, portada TEXT, ms INTEGER)")
+            db.execSQL("CREATE INDEX escuchas_cuando ON escuchas (cuando)")
         }
     }
 
@@ -164,6 +178,45 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
             delete("calidad", "uri = ?", arrayOf(p.uri))
         }
         return ok
+    }
+
+    // --- 1.4: «Tu resumen» --------------------------------------------------------------------------
+
+    fun anotarEscucha(uri: String, titulo: String, artista: String, portada: String, ms: Long, cuando: Long = ahora()) {
+        writableDatabase.insert("escuchas", null, ContentValues().apply {
+            put("cuando", cuando); put("uri", uri); put("titulo", titulo); put("artista", artista); put("portada", portada); put("ms", ms)
+        })
+    }
+
+    /** Lo que escuchaste entre `desde` y `hasta` (ms): minutos, cuántas, cuántos días y lo más escuchado. */
+    fun resumen(desde: Long, hasta: Long, n: Int = 5): Resumen {
+        class Suma(val titulo: String, val artista: String, var portada: String, var veces: Int = 0, var ms: Long = 0)
+        val canciones = linkedMapOf<String, Suma>()
+        val artistas = linkedMapOf<String, Suma>()
+        val dias = mutableSetOf<String>()
+        val dia = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT)
+        var total = 0L
+        var cuantas = 0
+        readableDatabase.rawQuery("SELECT cuando, titulo, artista, portada, ms FROM escuchas WHERE cuando >= ? AND cuando < ?",
+            arrayOf(desde.toString(), hasta.toString())).use { c ->
+            while (c.moveToNext()) {
+                val ms = c.getLong(4)
+                cuantas++
+                total += ms
+                dias += dia.format(java.util.Date(c.getLong(0)))
+                // «YOASOBI - Topic» es «YOASOBI»
+                val artista = Letras.limpiarArtista(Letras.artistaLimpio(c.getString(2) ?: "")).trim()
+                val titulo = c.getString(1) ?: ""
+                val portada = c.getString(3) ?: ""
+                canciones.getOrPut(titulo.lowercase() + "|" + artista.lowercase()) { Suma(titulo, artista, portada) }.run {
+                    veces++; this.ms += ms; if (this.portada.isEmpty()) this.portada = portada
+                }
+                if (artista.isNotEmpty()) artistas.getOrPut(artista.lowercase()) { Suma("", artista, portada) }.run { veces++; this.ms += ms }
+            }
+        }
+        fun top(m: Map<String, Suma>) = m.values.sortedWith(compareBy<Suma>({ -it.veces }, { -it.ms })).take(n)
+            .map { Resumen.Top(it.titulo, it.artista, it.portada, it.veces, Math.round(it.ms / 60_000.0).toInt()) }
+        return Resumen(desde, hasta, Math.round(total / 60_000.0).toInt(), cuantas, canciones.size, dias.size, top(canciones), top(artistas))
     }
 
     // --- playlists -----------------------------------------------------------------------------------
@@ -297,6 +350,19 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
     }
 
     companion object {
+        /** 1.4: de lunes a lunes (a la medianoche de aquí), en ms: 0 = esta semana, 1 = la pasada. */
+        fun semana(atras: Int = 0, ahora: Long = System.currentTimeMillis()): Pair<Long, Long> {
+            val c = java.util.Calendar.getInstance().apply {
+                timeInMillis = ahora
+                set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+                add(java.util.Calendar.DAY_OF_YEAR, -((get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7) - 7 * atras)
+            }
+            val desde = c.timeInMillis
+            c.add(java.util.Calendar.DAY_OF_YEAR, 7)
+            return desde to c.timeInMillis
+        }
+
         val ID_EN_NOMBRE = Regex("\\[([\\w-]{11})](\\.\\w+)?$")
         /** 1.3: el id fijo de «Tus me gusta» en la nube: el mismo en la PC y en el teléfono (si no, saldrían dos). */
         const val ME_GUSTA = "me-gusta"

@@ -95,10 +95,14 @@ class Fundido(private val ctx: Context, private val j: ExoPlayer, private val se
             val falta = dur - j.currentPosition
             if (n > 0 && dur != C.TIME_UNSET && dur > n * 3 && falta in 1..n && j.hasNextMediaItem()
                 && j.repeatMode != Player.REPEAT_MODE_ONE && !j.pauseAtEndOfMediaItems
-                && SystemClock.elapsedRealtime() - cargada > 2000) cruzar(falta)
+                && SystemClock.elapsedRealtime() - cargada > 2000 && !deLaRadio()) cruzar(falta)
             mano.postDelayed(this, 200)
         }
     }
+
+    /** 1.4: la de YouTube tarda en abrir: con una de la radio (la que sale o la que entra) no hay crossfade. */
+    private fun deLaRadio(): Boolean = Radio.idDe(j.currentMediaItem?.mediaId.orEmpty()) != null ||
+        j.nextMediaItemIndex.let { it != C.INDEX_UNSET && Radio.idDe(j.getMediaItemAt(it).mediaId) != null }
 
     private fun cruzar(falta: Long) {
         val item = j.currentMediaItem ?: return

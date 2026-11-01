@@ -1,15 +1,29 @@
 package com.vortexine.player
 
+import com.vortexine.player.motor.Biblioteca
 import com.vortexine.player.motor.Calidad
 import com.vortexine.player.motor.Descargas
 import com.vortexine.player.motor.Cancion
 import com.vortexine.player.motor.YtMusic
+import com.vortexine.player.reproductor.Radio
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** Lo mismo que prueba `test_motor.py` de Vortex Player en la PC, para el motor del teléfono. */
 class MotorTest {
+    @Test fun semanaYRadio() {   // 1.4: «Tu resumen» va de lunes a lunes; la radio lleva el id en su uri
+        val f = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm")
+        val jueves = f.parse("2026-10-29 15:30")!!.time
+        val (desde, hasta) = Biblioteca.semana(0, jueves)
+        assertEquals("2026-10-26 00:00", f.format(java.util.Date(desde)))
+        assertEquals("2026-11-02 00:00", f.format(java.util.Date(hasta)))
+        assertEquals("2026-10-19 00:00", f.format(java.util.Date(Biblioteca.semana(1, jueves).first)))
+        assertEquals("2026-10-26 00:00", f.format(java.util.Date(Biblioteca.semana(0, f.parse("2026-11-01 23:59")!!.time).first)))
+        assertEquals("ZRtdQ81jPUQ", Radio.idDe(Radio.uriDe("ZRtdQ81jPUQ")))
+        assertNull(Radio.idDe("content://media/external/audio/media/5"))
+    }
+
     @Test fun enlaces() {
         assertEquals(YtMusic.Enlace("youtube", "cancion", "dQw4w9WgXcQ"), YtMusic.tipoDe("https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=x"))
         assertEquals(YtMusic.Enlace("youtube", "cancion", "dQw4w9WgXcQ"), YtMusic.tipoDe("youtu.be/dQw4w9WgXcQ"))

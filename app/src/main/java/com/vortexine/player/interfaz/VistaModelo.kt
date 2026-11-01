@@ -20,7 +20,10 @@ import com.vortexine.player.motor.Letras
 import com.vortexine.player.motor.Pista
 import com.vortexine.player.motor.Playlist
 import com.vortexine.player.motor.YtMusic
+import com.vortexine.player.motor.Biblioteca
+import com.vortexine.player.motor.Resumen
 import com.vortexine.player.reproductor.Fundido
+import com.vortexine.player.reproductor.Radio
 import com.vortexine.player.reproductor.Jugador
 import com.vortexine.player.reproductor.ServicioReproduccion
 import com.vortexine.player.reproductor.Temporizador
@@ -67,7 +70,7 @@ data class Sonando(
 data class Bajando(val cancion: Cancion, val progreso: Float, val error: String = "")
 
 /** 1.3: una canción de la cola «A continuación»: su lugar en la cola del reproductor y qué es. */
-data class EnCola(val indice: Int, val pista: Pista)
+data class EnCola(val indice: Int, val pista: Pista, val radio: Boolean = false)   // 1.4: radio = de la radio sin fin
 
 /** 1.3: cuántas canciones ya tienen su letra guardada (para verlas sin internet). */
 data class LetrasGuardadas(val con: Int = 0, val total: Int = 0, val trabajando: Boolean = false)
@@ -108,6 +111,12 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     val letrasGuardadas = MutableStateFlow(LetrasGuardadas())
     private var despues = 0   // cuántas «tocar después» van detrás de la que suena
 
+    // 1.4: la radio sin fin y «Tu resumen» (esta semana y la pasada; el aviso sale una vez por semana)
+    val radio = MutableStateFlow(Radio.activa(app))
+    val resumen = MutableStateFlow(Resumen() to Resumen())
+    val avisoResumen = MutableStateFlow(false)
+    private val ajustes = app.getSharedPreferences("ajustes", android.content.Context.MODE_PRIVATE)
+
     private var control: MediaController? = null
 
     // 1.1: la cuenta de Google, la sincronización y las actualizaciones
@@ -119,6 +128,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     init {
         recargar()
         conectar()
+        cargarResumen()
         viewModelScope.launch {   // lo que baja la sincronización aparece en la biblioteca
             Sincro.estado.map { it.vuelta }.distinctUntilChanged().drop(1).collect { recargar() }
         }
@@ -184,7 +194,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             titulo = p?.titulo ?: md?.title?.toString().orEmpty(),
             artista = p?.artista ?: md?.artist?.toString().orEmpty(),
             portada = p?.portada ?: md?.artworkUri?.toString().orEmpty(),
-            etiqueta = p?.etiqueta.orEmpty(), nivel = p?.nivel.orEmpty(),
+            etiqueta = if (Radio.idDe(uri) != null) "Radio" else p?.etiqueta.orEmpty(), nivel = p?.nivel.orEmpty(),
             tocando = c.isPlaying, posicion = c.currentPosition, duracion = c.duration.coerceAtLeast(0),
             aleatorio = c.shuffleModeEnabled, repetir = c.repeatMode,
             hayAnterior = c.hasPreviousMediaItem() || c.currentPosition > 3000, haySiguiente = c.hasNextMediaItem(),
@@ -236,6 +246,7 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         trabajoLetra?.cancel()
         letra.value = null
         buscandoLetra.value = false
+        viewModelScope.launch { delay(1500); cargarResumen() }   // la que acaba de terminar ya cuenta
         if (s.uri.isEmpty()) return
         val p = pistas.value.firstOrNull { it.uri == s.uri }
         if (p != null && restaurada) anotarEscuchada(p)
@@ -288,7 +299,8 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
 
     private fun item(p: Pista) = MediaItem.Builder().setMediaId(p.uri).setUri(p.uri.toUri())
         .setMediaMetadata(MediaMetadata.Builder().setTitle(p.titulo).setArtist(p.artista).setAlbumTitle(p.album)
-            .setArtworkUri(p.portada.takeIf { it.isNotEmpty() }?.let(Uri::parse)).build()).build()
+            .setArtworkUri(p.portada.takeIf { it.isNotEmpty() }?.let(Uri::parse))
+            .setExtras(android.os.Bundle().apply { putString("id", p.videoId) }).build()).build()   // 1.4: para la radio
 
     /** Toca `lista` empezando en `desde` (la cola es la lista entera, como en la PC). */
     fun tocar(lista: List<Pista>, desde: Int, aleatorio: Boolean = false, de: String = "Tu música") {
@@ -343,7 +355,12 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
         val lista = mutableListOf<EnCola>()
         var i = t.getNextWindowIndex(j.currentMediaItemIndex, Player.REPEAT_MODE_OFF, j.shuffleModeEnabled)
         while (i != androidx.media3.common.C.INDEX_UNSET && lista.size < 300) {
-            porUri[j.getMediaItemAt(i).mediaId]?.let { lista += EnCola(i, it) }
+            val m = j.getMediaItemAt(i)
+            val md = m.mediaMetadata
+            if (Radio.idDe(m.mediaId) != null) lista += EnCola(i, Pista(m.mediaId, md.title?.toString().orEmpty(),
+                md.artist?.toString().orEmpty(), md.albumTitle?.toString().orEmpty(), md.durationMs ?: 0, 0,
+                md.artworkUri?.toString().orEmpty(), Radio.idDe(m.mediaId).orEmpty()), radio = true)
+            else porUri[m.mediaId]?.let { lista += EnCola(i, it) }
             i = t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, j.shuffleModeEnabled)
         }
         siguientes.value = lista
@@ -400,6 +417,30 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
     }
 
     fun ponerFundido(segundos: Int) { Fundido.poner(getApplication(), segundos); fundido.value = segundos }
+
+    // --- 1.4: la radio sin fin y «Tu resumen» ----------------------------------------------------------
+
+    fun ponerRadio(activa: Boolean) { Radio.poner(getApplication(), activa); radio.value = activa }
+
+    /** La de la radio que suena, a tu biblioteca (luego ya le puedes dar ❤️). */
+    fun bajarDeLaRadio(s: Sonando) {
+        val id = Radio.idDe(s.uri) ?: return
+        bajar(Cancion(id, s.titulo, s.artista, "", (s.duracion / 1000).toInt(), s.portada))
+        aviso.value = "Bajando a tu biblioteca"
+    }
+
+    fun cargarResumen() = viewModelScope.launch {
+        val esta = Biblioteca.semana(0)
+        resumen.value = withContext(Dispatchers.IO) {
+            bib.resumen(esta.first, esta.second) to Biblioteca.semana(1).let { bib.resumen(it.first, it.second) }
+        }
+        avisoResumen.value = resumen.value.second.escuchas > 0 && ajustes.getLong("resumen_visto", 0) < esta.first
+    }
+
+    fun resumenVisto() {
+        ajustes.edit().putLong("resumen_visto", Biblioteca.semana(0).first).apply()
+        avisoResumen.value = false
+    }
 
     // --- 1.3: las letras de toda tu música, para verlas sin internet -----------------------------------
 

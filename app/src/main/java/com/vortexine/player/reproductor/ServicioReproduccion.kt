@@ -17,6 +17,7 @@ import com.vortexine.player.interfaz.MainActivity
 class ServicioReproduccion : MediaSessionService() {
     private var sesion: MediaSession? = null
     private var fundido: Fundido? = null
+    private var escuchas: Escuchas? = null
 
     @androidx.annotation.OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -26,6 +27,7 @@ class ServicioReproduccion : MediaSessionService() {
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)   // pausa si entra una llamada
             .setHandleAudioBecomingNoisy(true)                                // pausa si se desconectan los audífonos
             .setWakeMode(C.WAKE_MODE_LOCAL)
+            .setMediaSourceFactory(Radio.fuentes(this))                      // 1.4: las de la radio suenan de YouTube
             .build()
         // Una sesión de audio propia desde el principio: si no, el ecualizador cae en la salida general del teléfono
         val sesionAudio = (getSystemService(AUDIO_SERVICE) as android.media.AudioManager).generateAudioSessionId()
@@ -38,6 +40,9 @@ class ServicioReproduccion : MediaSessionService() {
         // 1.3: crossfade y el widget de la pantalla de inicio
         Fundido.cargar(this)
         fundido = Fundido(this, jugador, sesionAudio).also { it.empezar() }
+        // 1.4: la radio sin fin y lo que cuenta para «Tu resumen»
+        jugador.addListener(RadioSinFin(this, jugador))
+        escuchas = Escuchas(this, jugador).also { jugador.addListener(it) }
         jugador.addListener(object : androidx.media3.common.Player.Listener {
             override fun onEvents(player: androidx.media3.common.Player, events: androidx.media3.common.Player.Events) {
                 if (events.containsAny(androidx.media3.common.Player.EVENT_MEDIA_ITEM_TRANSITION,
@@ -56,6 +61,7 @@ class ServicioReproduccion : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        escuchas?.soltar()
         fundido?.soltar()
         Temporizador.poner(0)
         Ecualizador.soltar()

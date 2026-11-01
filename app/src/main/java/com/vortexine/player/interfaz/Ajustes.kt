@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -110,6 +111,90 @@ fun AvisoNube(vm: VistaModelo) {
     }
 }
 
+// --- 1.4: «Tu resumen» -----------------------------------------------------------------------------------
+
+/** «3 h 20 min». */
+fun minutos(m: Int): String = if (m < 60) "$m min" else "${m / 60} h" + if (m % 60 > 0) " ${m % 60} min" else ""
+
+/** Arriba de «Tu música», una vez por semana: lo de la semana pasada (siempre está en Ajustes). */
+@Composable
+fun AvisoResumen(vm: VistaModelo, ver: () -> Unit) {
+    val aviso by vm.avisoResumen.collectAsStateWithLifecycle()
+    val r by vm.resumen.collectAsStateWithLifecycle()
+    if (!aviso) return
+    val pasada = r.second
+    val top = pasada.canciones.firstOrNull()
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = C.tarjeta)) {
+        Row(Modifier.padding(start = 14.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (top != null) Portada(top.portada, 48.dp, 4.dp)
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text("Tu semana en música", color = C.texto, fontWeight = FontWeight.SemiBold)
+                Text(minutos(pasada.minutos) + " escuchando" + (top?.let { " · la que más sonó: «${it.titulo}»" } ?: ""),
+                    color = C.tenue, fontSize = 13.sp, maxLines = 2)
+                TextButton({ vm.resumenVisto(); ver() }, contentPadding = PaddingValues(0.dp)) { Text("Ver tu resumen") }
+            }
+            IconButton(vm::resumenVisto) { Icon(Icons.Rounded.Close, "Cerrar", tint = C.tenue) }
+        }
+    }
+}
+
+@Composable
+private fun TuResumen(vm: VistaModelo) {
+    val r by vm.resumen.collectAsStateWithLifecycle()
+    val aviso by vm.avisoResumen.collectAsStateWithLifecycle()
+    var cual by rememberSaveable { mutableIntStateOf(if (aviso) 1 else 0) }
+    LaunchedEffect(Unit) { vm.cargarResumen() }
+    val s = if (cual == 0) r.first else r.second
+    val fecha = remember { java.text.SimpleDateFormat("d MMM", java.util.Locale("es", "MX")) }
+    Seccion("Tu resumen", Icons.Rounded.Insights) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Esta semana", "La semana pasada").forEachIndexed { i, nombre ->
+                FilterChip(cual == i, { cual = i }, { Text(nombre) }, border = null,
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = C.morado, selectedLabelColor = C.blanco,
+                        containerColor = C.campo, labelColor = C.suave))
+            }
+        }
+        if (s.desde > 0) Text("Del lunes ${fecha.format(java.util.Date(s.desde))} al domingo ${fecha.format(java.util.Date(s.hasta - 1))}",
+            color = C.tenue, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+        if (s.escuchas == 0) {
+            Text(if (cual == 1) "La semana pasada no escuchaste nada aquí." else "Todavía no hay nada esta semana: pon música y aquí irá apareciendo.",
+                color = C.suave, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
+            return@Seccion
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            listOf(minutos(s.minutos) to "escuchando", "${s.distintas}" to if (s.distintas == 1) "canción" else "canciones",
+                "${s.dias} de 7" to "días con música").forEach { (n, t) ->
+                Column {
+                    Text(n, color = C.acento, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(t, color = C.tenue, fontSize = 12.sp)
+                }
+            }
+        }
+        Text("Lo que más escuchaste", color = C.texto, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
+        s.canciones.forEachIndexed { i, c ->
+            Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${i + 1}", color = C.tenue, fontSize = 13.sp, modifier = Modifier.width(18.dp))
+                Portada(c.portada, 40.dp, 4.dp)
+                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                    Text(c.titulo, color = C.texto, fontSize = 14.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Text(c.artista.ifEmpty { "Artista desconocido" }, color = C.tenue, fontSize = 12.sp, maxLines = 1)
+                }
+                Text(if (c.veces == 1) "1 vez" else "${c.veces} veces", color = C.tenue, fontSize = 12.sp)
+            }
+        }
+        if (s.artistas.isNotEmpty()) {
+            Text("Tus artistas", color = C.texto, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+            s.artistas.forEachIndexed { i, a ->
+                Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${i + 1}", color = C.tenue, fontSize = 13.sp, modifier = Modifier.width(18.dp))
+                    Text(a.artista, color = C.texto, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                    Text(minutos(a.minutos), color = C.tenue, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun PantallaAjustes(vm: VistaModelo) {
     val ctx = LocalContext.current
@@ -122,9 +207,12 @@ fun PantallaAjustes(vm: VistaModelo) {
     val iniciar = rememberIniciarSesion(vm)
     val fundido by vm.fundido.collectAsStateWithLifecycle()
     val letras by vm.letrasGuardadas.collectAsStateWithLifecycle()
+    val radio by vm.radio.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Titulo("Ajustes", "Tu cuenta, la reproducción y las actualizaciones")
+        Titulo("Ajustes", "Tu resumen, tu cuenta, la reproducción y las actualizaciones")
+
+        TuResumen(vm)
 
         Seccion("Cuenta de Google", Icons.Rounded.AccountCircle) {
             if (cuenta.conectada) {
@@ -149,8 +237,16 @@ fun PantallaAjustes(vm: VistaModelo) {
             }
         }
 
-        // 1.3: crossfade y las letras guardadas para verlas sin internet
+        // 1.3: crossfade y las letras guardadas para verlas sin internet (1.4: y la radio sin fin)
         Seccion("Reproducción", Icons.Rounded.Tune) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 14.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("Radio sin fin", color = C.texto, fontWeight = FontWeight.SemiBold)
+                    Text("Cuando se acaba lo que pusiste, siguen canciones parecidas de YouTube Music, sin bajarlas. " +
+                        "Si una te gusta, bájala con el botón donde va el corazón.", color = C.tenue, fontSize = 12.sp)
+                }
+                Switch(radio, vm::ponerRadio, colors = SwitchDefaults.colors(checkedTrackColor = C.morado))
+            }
             Text("Crossfade", color = C.texto, fontWeight = FontWeight.SemiBold)
             Text("La canción que termina se va apagando mientras la siguiente entra.", color = C.tenue, fontSize = 12.sp)
             Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
