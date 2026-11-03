@@ -490,6 +490,26 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
 
     fun compartir(p: Pista) = compartir(p.titulo, p.artista, p.videoId)
 
+    /** 1.6: la playlist como enlace de YouTube (lo abre cualquiera; Vortex Player la baja con su nombre). */
+    fun compartirPlaylist(nombre: String, pistas: List<Pista>) = viewModelScope.launch {
+        if (pistas.isEmpty()) return@launch
+        aviso.value = "Armando el enlace…"
+        val io = Dispatchers.IO.limitedParallelism(8)
+        val ids = pistas.map { p ->
+            async(io) {
+                p.videoId.ifEmpty {   // las tuyas sin id se buscan en YouTube Music
+                    runCatching { YtMusic.buscar("${p.artista} ${p.titulo}", 1).firstOrNull()?.id }.getOrNull().orEmpty()
+                }
+            }
+        }.awaitAll()
+        val enlaces = YtMusic.enlacesPlaylist(nombre, ids)
+        if (enlaces.isEmpty()) { aviso.value = "No encontré estas canciones en YouTube Music."; return@launch }
+        val enviar = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_TEXT, "$nombre\n" + enlaces.joinToString("\n"))
+        getApplication<Application>().startActivity(android.content.Intent.createChooser(enviar, "Compartir playlist")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     // --- 1.5: tu mezcla del día ----------------------------------------------------------------------
 
     private var armandoMezcla = false
@@ -749,6 +769,14 @@ class VistaModelo(app: Application) : AndroidViewModel(app) {
             nombre to coroutineScope {
                 pistasSp.map { async(io) { runCatching { YtMusic.buscar(YtMusic.busquedaDe(it), 1).firstOrNull() }.getOrNull() } }
                     .awaitAll().filterNotNull().distinctBy { it.id }
+            }
+        }
+        e.clase == "compartida" -> {   // 1.6: los ids vienen en el enlace; los datos de cada una, 8 a la vez
+            val (nombre, ids) = e.id.split("\n", limit = 2)
+            val io = Dispatchers.IO.limitedParallelism(8)
+            nombre to coroutineScope {
+                ids.split(",").filter { it.isNotBlank() }.distinct()
+                    .map { async(io) { runCatching { Descargas.datosDe(it) }.getOrNull() } }.awaitAll().filterNotNull()
             }
         }
         e.clase == "playlist" -> Descargas.cancionesDePlaylist(e.id)

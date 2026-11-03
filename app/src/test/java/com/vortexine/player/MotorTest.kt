@@ -34,6 +34,18 @@ class MotorTest {
         assertNull(YtMusic.tipoDe("idol yoasobi"))
     }
 
+    @Test fun compartirPlaylist() {
+        // 1.6: el mismo enlace que arma la PC, de 50 en 50, y se lee de vuelta con su nombre
+        val (uno) = YtMusic.enlacesPlaylist("Para Ana & co", listOf("ZRtdQ81jPUQ", "", "dQw4w9WgXcQ", "ZRtdQ81jPUQ"))
+        assertEquals("https://www.youtube.com/watch_videos?video_ids=ZRtdQ81jPUQ,dQw4w9WgXcQ&title=Para%20Ana%20%26%20co", uno)
+        assertEquals(YtMusic.Enlace("youtube", "compartida", "Para Ana & co\nZRtdQ81jPUQ,dQw4w9WgXcQ"), YtMusic.tipoDe(uno))
+        val muchos = YtMusic.enlacesPlaylist("Larga", (0 until 120).map { "%011d".format(it) })
+        assertEquals(3, muchos.size)
+        assertEquals("Larga (1/3)", YtMusic.tipoDe(muchos[0])!!.id.substringBefore("\n"))
+        assertEquals(listOf(50, 50, 20), muchos.map { YtMusic.tipoDe(it)!!.id.substringAfter("\n").split(",").size })
+        assertEquals(emptyList<String>(), YtMusic.enlacesPlaylist("Vacía", listOf("", "")))
+    }
+
     @Test fun etiquetas() {
         assertEquals("Hi-Res 24/96", Calidad.etiqueta("flac", 24, 96000, 0))
         assertEquals("CD 16/44,1", Calidad.etiqueta("flac", 16, 44100, 0))

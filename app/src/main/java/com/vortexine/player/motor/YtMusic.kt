@@ -55,10 +55,29 @@ object YtMusic {
         if (host.endsWith("youtube.com")) {
             if (ruta == "/watch" && q["v"] != null) return Enlace("youtube", "cancion", q.getValue("v"))
             if (ruta == "/playlist" && q["list"] != null) return Enlace("youtube", "playlist", q.getValue("list"))
+            // 1.6: una playlist compartida (enlacesPlaylist); el id es «nombre\nid1,id2,…»
+            if (ruta == "/watch_videos" && q["video_ids"] != null)
+                return Enlace("youtube", "compartida", q["title"].orEmpty().ifBlank { "Playlist compartida" } + "\n" + q.getValue("video_ids"))
             Regex("^/(?:browse|channel)/([\\w-]+)").find(ruta)?.let { return Enlace("youtube", "playlist", it.groupValues[1]) }
             Regex("^/shorts/([\\w-]+)").find(ruta)?.let { return Enlace("youtube", "cancion", it.groupValues[1]) }
         }
         return null
+    }
+
+    private const val POR_ENLACE = 50   // YouTube no toma más de 50 en una playlist sin cuenta
+
+    private fun cifrar(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20").replace("%2C", ",")
+
+    /**
+     * 1.6: la playlist como enlace(s) de YouTube que abre cualquiera, sin cuenta (YouTube arma la lista al
+     * abrirlo), y que Vortex Player, aquí o en la PC, baja entero con su nombre. De 50 en 50.
+     */
+    fun enlacesPlaylist(nombre: String, ids: List<String>): List<String> {
+        val partes = ids.filter { it.isNotEmpty() }.distinct().chunked(POR_ENLACE)
+        return partes.mapIndexed { i, parte ->
+            val titulo = if (partes.size == 1) nombre else "$nombre (${i + 1}/${partes.size})"
+            "https://www.youtube.com/watch_videos?video_ids=${parte.joinToString(",")}&title=${cifrar(titulo)}"
+        }
     }
 
     // --- Spotify -------------------------------------------------------------------------------------

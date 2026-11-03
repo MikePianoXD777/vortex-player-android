@@ -353,6 +353,10 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
                 IconButton({ vm.tocar(dentro, dentro.indices.random(), aleatorio = true, de = p.nombre) }, enabled = dentro.isNotEmpty()) {
                     Icon(Icons.Rounded.Shuffle, "Aleatorio", tint = C.suave)
                 }
+                // 1.6: la playlist como enlace, para mandársela a alguien
+                IconButton({ vm.compartirPlaylist(p.nombre, dentro) }, enabled = dentro.isNotEmpty()) {
+                    Icon(Icons.Rounded.Share, "Compartir", tint = C.suave)
+                }
                 if (!p.meGusta) {
                     IconButton({ renombrar = true }) { Icon(Icons.Rounded.Edit, "Renombrar", tint = C.suave) }
                     IconButton({ borrar = true }) { Icon(Icons.Rounded.DeleteOutline, "Borrar playlist", tint = C.suave) }
