@@ -130,3 +130,23 @@ class MotorTest {
         assertNull(com.vortexine.player.reproductor.Despertador.proxima(a.copy(activo = false), ahora))
     }
 }
+
+class CrossfadeTest {
+    @org.junit.Test
+    fun `el cruce no baja de volumen a la mitad`() {
+        for (i in 0..100) {
+            val (sale, entra) = com.vortexine.player.reproductor.Fundido.curvaDe(i / 100f)
+            org.junit.Assert.assertEquals(1f, sale * sale + entra * entra, 0.001f)
+        }
+    }
+
+    @org.junit.Test
+    fun `empieza con la que sale y termina con la que entra`() {
+        val (sale0, entra0) = com.vortexine.player.reproductor.Fundido.curvaDe(0f)
+        val (sale1, entra1) = com.vortexine.player.reproductor.Fundido.curvaDe(1f)
+        org.junit.Assert.assertEquals(1f, sale0, 0.001f)
+        org.junit.Assert.assertEquals(0f, entra0, 0.001f)
+        org.junit.Assert.assertEquals(0f, sale1, 0.001f)
+        org.junit.Assert.assertEquals(1f, entra1, 0.001f)
+    }
+}
