@@ -369,6 +369,16 @@ class Biblioteca(private val ctx: Context) : SQLiteOpenHelper(ctx, "vortex-playe
     }
 
     companion object {
+        /** 1.6.2: «Agregar canciones» dentro de una playlist (como en la PC y en Spotify): tu música que
+         *  coincide con la búsqueda, con si ya está en la playlist. Las que faltan, primero; luego, las más nuevas. */
+        fun paraAgregar(pistas: List<Pista>, dentro: Set<String>, buscar: String, limite: Int = 60): List<Pair<Pista, Boolean>> {
+            val q = buscar.trim()
+            return pistas.asSequence()
+                .filter { q.isEmpty() || listOf(it.titulo, it.artista, it.album).any { c -> c.contains(q, ignoreCase = true) } }
+                .sortedWith(compareBy<Pista> { it.uri in dentro }.thenByDescending { it.agregadaMs })
+                .take(limite).map { it to (it.uri in dentro) }.toList()
+        }
+
         /** 1.4: de lunes a lunes (a la medianoche de aquí), en ms: 0 = esta semana, 1 = la pasada. */
         fun semana(atras: Int = 0, ahora: Long = System.currentTimeMillis()): Pair<Long, Long> {
             val c = java.util.Calendar.getInstance().apply {

@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.SubcomposeAsyncImage
+import com.vortexine.player.motor.Pista
 import com.vortexine.player.motor.Playlist
 
 /** La portada, o una nota musical si no hay. */
@@ -114,5 +115,42 @@ fun PedirTexto(titulo: String, inicial: String, boton: String, alAceptar: (Strin
         text = { OutlinedTextField(t, { t = it }, singleLine = true) },
         confirmButton = { TextButton({ alAceptar(t) }) { Text(boton) } },
         dismissButton = { TextButton(alCerrar) { Text("Cancelar") } },
+    )
+}
+
+
+/** 1.6.2: agregarle canciones a una playlist desde la misma playlist: buscar en tu música y «Agregar». */
+@Composable
+fun AgregarCanciones(nombre: String, pistas: List<Pista>, dentro: Set<String>, alAgregar: (Pista) -> Unit, alBuscarFuera: (String) -> Unit, alCerrar: () -> Unit) {
+    var q by remember { mutableStateOf("") }
+    val lista = remember(pistas, dentro, q) { com.vortexine.player.motor.Biblioteca.paraAgregar(pistas, dentro, q) }
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        containerColor = C.tarjeta,
+        title = { Text("Agregar a «$nombre»", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                OutlinedTextField(q, { q = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Rounded.Search, null) }, placeholder = { Text("Busca en tu música") })
+                if (lista.isEmpty()) Column(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (q.isBlank()) "Todavía no hay música en tu teléfono" else "No la tienes en tu música", color = C.suave)
+                    TextButton({ alBuscarFuera(q) }) { Text("Buscar en YouTube Music") }
+                } else LazyColumn(Modifier.heightIn(max = 420.dp).padding(top = 8.dp)) {
+                    items(lista, key = { it.first.uri }) { (t, ya) ->
+                        ListItem(
+                            headlineContent = { Text(t.titulo, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = { Text(t.artista, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingContent = { Portada(t.portada, 42.dp, 6.dp) },
+                            trailingContent = {
+                                if (ya) Text("Ya está", color = C.tenue, fontSize = 13.sp)
+                                else FilledTonalButton({ alAgregar(t) }) { Text("Agregar") }
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(alCerrar) { Text("Listo") } },
     )
 }

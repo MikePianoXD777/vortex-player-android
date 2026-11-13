@@ -316,7 +316,7 @@ fun PantallaPlaylists(vm: VistaModelo, abrir: (Long) -> Unit) {
 }
 
 @Composable
-fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
+fun PantallaPlaylist(vm: VistaModelo, id: Long, buscarFuera: (String) -> Unit = {}, volver: () -> Unit) {
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     val pistas by vm.pistas.collectAsStateWithLifecycle()
     val sonando by vm.sonando.collectAsStateWithLifecycle()
@@ -332,6 +332,7 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
     var renombrar by remember { mutableStateOf(false) }
     var borrar by remember { mutableStateOf(false) }
     var paraPlaylist by remember { mutableStateOf<Cancion?>(null) }
+    var agregar by remember { mutableStateOf(false) }
 
     LaunchedEffect(id, dentro.isNotEmpty()) { if (dentro.isNotEmpty() && id !in recomendadas) vm.recomendar(id) }
 
@@ -357,6 +358,8 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
                 IconButton({ vm.compartirPlaylist(p.nombre, dentro) }, enabled = dentro.isNotEmpty()) {
                     Icon(Icons.Rounded.Share, "Compartir", tint = C.suave)
                 }
+                // 1.6.2: agregarle canciones desde aquí (antes solo desde tu música o Buscar)
+                IconButton({ agregar = true }) { Icon(Icons.Rounded.Add, "Agregar canciones", tint = C.suave) }
                 if (!p.meGusta) {
                     IconButton({ renombrar = true }) { Icon(Icons.Rounded.Edit, "Renombrar", tint = C.suave) }
                     IconButton({ borrar = true }) { Icon(Icons.Rounded.DeleteOutline, "Borrar playlist", tint = C.suave) }
@@ -374,7 +377,12 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
                     leadingIcon = { Icon(Icons.Rounded.RemoveCircleOutline, null) })
             } }
         }
-        if (dentro.isEmpty()) item { Vacio(Icons.Rounded.QueueMusic, "Está vacía", "Agrégale canciones desde tu música o desde Buscar.") }
+        if (dentro.isEmpty()) item {
+            Vacio(Icons.Rounded.QueueMusic, "Está vacía", "Busca en tu música y agrégale canciones.")
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                FilledTonalButton({ agregar = true }) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(4.dp)); Text("Agregar canciones") }
+            }
+        }
         if (dentro.isNotEmpty()) item {
             Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Recomendadas para esta playlist", color = C.texto, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -384,6 +392,8 @@ fun PantallaPlaylist(vm: VistaModelo, id: Long, volver: () -> Unit) {
         }
         items(recomendadas[id].orEmpty().filter { it.id !in bajadas }, key = { "r" + it.id }) { c -> Box(Modifier.animateItem()) { FilaCancion(c, vm, id) { vm.bajar(it, id) } } }
     }
+    if (agregar) AgregarCanciones(p.nombre, pistas, dentro.map { it.uri }.toSet(), { vm.agregarA(id, it) },
+        { agregar = false; buscarFuera(it) }) { agregar = false }
     if (renombrar) PedirTexto("Renombrar", p.nombre, "Guardar", { vm.renombrar(id, it); renombrar = false }) { renombrar = false }
     if (borrar) AlertDialog({ borrar = false }, containerColor = C.tarjeta, title = { Text("¿Borrar «${p.nombre}»?") },
         text = { Text("Las canciones se quedan en tu música.") },

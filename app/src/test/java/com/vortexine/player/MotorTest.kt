@@ -149,4 +149,18 @@ class CrossfadeTest {
         org.junit.Assert.assertEquals(0f, sale1, 0.001f)
         org.junit.Assert.assertEquals(1f, entra1, 0.001f)
     }
+
+    // 1.6.2: Mike (13/11): «el botón para agregar playlist no me deja agregar». La playlist nueva quedaba vacía
+    // y sin forma de llenarla desde ahí; ahora «Agregar canciones» busca en tu música.
+    @Test fun agregarCancionesAUnaPlaylist() {
+        fun pista(uri: String, titulo: String, artista: String, cuando: Long) =
+            com.vortexine.player.motor.Pista(uri, titulo, artista, "Disco", 1000, 1, agregadaMs = cuando)
+        val todas = listOf(pista("a", "Uno", "Yoasobi", 1), pista("b", "Dos", "Ado", 3), pista("c", "Tres", "ado", 2))
+        val nada = Biblioteca.paraAgregar(todas, emptySet(), "")
+        assertEquals(listOf("b", "c", "a"), nada.map { it.first.uri })          // las más nuevas primero
+        val conB = Biblioteca.paraAgregar(todas, setOf("b"), "")
+        assertEquals(listOf("c" to false, "a" to false, "b" to true), conB.map { it.first.uri to it.second })
+        assertEquals(listOf("b", "c"), Biblioteca.paraAgregar(todas, emptySet(), " ADO ").map { it.first.uri })
+        assertEquals(1, Biblioteca.paraAgregar(todas, emptySet(), "", limite = 1).size)
+    }
 }

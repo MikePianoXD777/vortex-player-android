@@ -87,7 +87,7 @@ fun App(vm: VistaModelo) {
                             1 -> PantallaBuscar(vm)
                             2 -> AnimatedContent(abierta, transitionSpec = { deLado(targetState != null) }, label = "playlist") { a ->
                                 Box(conDesenfoque().fillMaxSize()) {
-                                    if (a == null) PantallaPlaylists(vm) { abierta = it } else PantallaPlaylist(vm, a) { abierta = null }
+                                    if (a == null) PantallaPlaylists(vm) { abierta = it } else PantallaPlaylist(vm, a, { q -> pestana = 1; if (q.isNotBlank()) vm.buscar(q) }) { abierta = null }
                                 }
                             }
                             3 -> PantallaEcualizador()
